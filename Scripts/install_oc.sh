@@ -1,6 +1,9 @@
 #!/bin/bash
 
-PLEDIT=/usr/libexec/PlistBuddy
+PLEDIT='/usr/libexec/PlistBuddy'
+
+# Should be at PATH, but in case PATH is messed up
+PLUTIL='/usr/bin/plutil'
 RELEASE_Dir=""
 
 # Display style setting
@@ -184,7 +187,29 @@ function getPlistHelper(){
   fi
 }
 
+function deletePlistIfNotExist() {
+  # Check if a path exist in old efi file
+  # And delete in new file if not exist
+  # $! Old EFI file
+  # $2 New EFI file
+  # $3+ Plist path or array regex
+  while :; do
+    local _path=$(getPlistHelper "$1" "${@:3}") || return 0
+    local _oldVarXml=$("$PLEDIT" "$1" -x -c "Print $_path") || return 0
+    if [[ -z "$_oldVarXml" ]];then
+      # Path missing in old config
+      "$PLEDIT" "$2" -c "Delete ${_path}" || return 1
+    fi
+    echo -e "${GREEN}Detected and deleted ${BLUE}${_path}${GREEN}!${OFF}"
+    return 0
+  done
+  errMsg "Error deleting ${*:3}!"
+  return 1
+
+}
+
 function restorePlist() {
+  # Set Old efi file value to new efi file
   # $! Old EFI file
   # $2 New EFI file
   # $3+ Plist path or array regex
@@ -193,12 +218,30 @@ function restorePlist() {
   while :; do
     local _path=$(getPlistHelper "$1" "${@:3}") || break
     local _oldVar=$("$PLEDIT" "$1" -c "Print $_path") || break
-    if [[ -z "$_oldVar" ]];then
+    local _oldVarXml=$("$PLEDIT" "$1" -x -c "Print $_path") || break
+    if [[ -z "$_oldVarXml" ]];then
       errMsg "Properties not found: $_path"
       errMsg "Skiping!!!..."
       break;
     fi
+    if [[ "$_oldVar" != "$_oldVarXml" ]];then
+      # Binary data
+      # Switch to plutil as PlistBuddy expect binary input that bash cannot pass as parameters
+      # And plutil take base64 for data.
+
+      # Change path format, plutil use '.' as separetor
+      local _newPath=$(echo -n $_path | tr ':' '.') 
+      
+      #plutil should be at PATH
+      "$PLUTIL" -replace "$_newPath" -data "$_oldVarXml" "$2" || break
+    else
     "$PLEDIT" "$2" -c "Set $_path $_oldVar" || break
+    
+    # Save the change, maybe it's better to commit the change after
+    # But for better consistency with plutil we save at every change.
+    "$PLEDIT" "$2" -c "Save" || break
+      
+    fi
     echo -e "${GREEN}Restored ${BLUE}${_path}${GREEN} to ${BLUE}${_oldVar}${GREEN} !${OFF}"
     return 0
   done
@@ -206,8 +249,8 @@ function restorePlist() {
   return 1
 }
 
-function editBluetooth() {
-  echo "Detecting Bluetooth..."
+function restoreBluetooth() {
+  echo -e "${GREEN}Restoring Bluetooth...${OFF}"
   [[ -z "$efi_work_dir" ]] && errMsg "No work directory found. Try to download firts?"&&exit 1
   [[ -z "$EFI_DIR" ]] && mount_efi
 
@@ -218,7 +261,24 @@ function editBluetooth() {
 }
 
 
-function 
+function restoreDVMT() {
+  echo -e "${GREEN}Restoring DVMT...${OFF}"
+  [[ -z "$efi_work_dir" ]] && errMsg "No work directory found. Try to download firts?"&&exit 1
+  [[ -z "$EFI_DIR" ]] && mount_efi
+
+  restorePlist "${EFI_DIR}/EFI/OC/config.plist" "${efi_work_dir}/OC/config.plist" ':DeviceProperties:Add:PciRoot(0x0)/Pci(0x2,0x0):AAPL,ig-platform-id'
+  restorePlist "${EFI_DIR}/EFI/OC/config.plist" "${efi_work_dir}/OC/config.plist" ':DeviceProperties:Add:PciRoot(0x0)/Pci(0x2,0x0):framebuffer-flags'
+  restorePlist "${EFI_DIR}/EFI/OC/config.plist" "${efi_work_dir}/OC/config.plist" ':DeviceProperties:Add:PciRoot(0x0)/Pci(0x2,0x0):framebuffer-flags'
+
+  deletePlistIfNotExist "${EFI_DIR}/EFI/OC/config.plist" "${efi_work_dir}/OC/config.plist" ':DeviceProperties:Add:PciRoot(0x0)/Pci(0x2,0x0):framebuffer-fbmem'
+  deletePlistIfNotExist "${EFI_DIR}/EFI/OC/config.plist" "${efi_work_dir}/OC/config.plist" ':DeviceProperties:Add:PciRoot(0x0)/Pci(0x2,0x0):framebuffer-stolenmem'
+  deletePlistIfNotExist "${EFI_DIR}/EFI/OC/config.plist" "${efi_work_dir}/OC/config.plist" ':DeviceProperties:Add:PciRoot(0x0)/Pci(0x2,0x0):framebuffer-con0-enable'
+  deletePlistIfNotExist "${EFI_DIR}/EFI/OC/config.plist" "${efi_work_dir}/OC/config.plist" ':DeviceProperties:Add:PciRoot(0x0)/Pci(0x2,0x0):framebuffer-con0-flags'
+  deletePlistIfNotExist "${EFI_DIR}/EFI/OC/config.plist" "${efi_work_dir}/OC/config.plist" ':DeviceProperties:Add:PciRoot(0x0)/Pci(0x2,0x0):framebuffer-con1-flags'
+  deletePlistIfNotExist "${EFI_DIR}/EFI/OC/config.plist" "${efi_work_dir}/OC/config.plist" ':DeviceProperties:Add:PciRoot(0x0)/Pci(0x2,0x0):framebuffer-con2-flags'
+  echo Done!
+}
+
 #installEFI
 #downloadEFI
 editBluetooth
