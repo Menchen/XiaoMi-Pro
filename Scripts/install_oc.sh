@@ -150,6 +150,7 @@ function searchPlistArray(){
   # !!! The input is stdin and "should" be array output from PlistBuddy
   # !!! The script find the first match and calculate the index of array of most upper level that contain it
   # !!! You should add indent to regex patter if the input contain nested structure!
+  # !!! The regex match to Print of PlistBuddy, not the original file. The formats are differents.
   perl -n -e 'BEGIN{$n=0}' -e 'if(/^( *)Array \{$/){if($n==0){$a=$1}else{exit 1}}' -e 'if(/^$a    \}$/){$n++}' -e 'if(/^$a\}$/){exit 0}' -e '{if(/'"${1}"'/){print $n;exit 0}}' -
   return $?
 }
@@ -169,7 +170,8 @@ function getPlistHelper(){
   fi
   if [[ $# -eq 2 ]];then
     # Base case
-    $PLEDIT "$1" -c "Print $2"
+    #$PLEDIT "$1" -c "Print $2"
+    echo -n "$2"
     return 0
   fi
   if [[ "$(echo $3|cut -c1)" == ":" ]];then
@@ -182,14 +184,45 @@ function getPlistHelper(){
   fi
 }
 
+function restorePlist() {
+  # $! Old EFI file
+  # $2 New EFI file
+  # $3+ Plist path or array regex
+
+
+  while :; do
+    local _path=$(getPlistHelper "$1" "${@:3}") || break
+    local _oldVar=$("$PLEDIT" "$1" -c "Print $_path") || break
+    if [[ -z "$_oldVar" ]];then
+      errMsg "Properties not found: $_path"
+      errMsg "Skiping!!!..."
+      break;
+    fi
+    "$PLEDIT" "$2" -c "Set $_path $_oldVar" || break
+    echo -e "${GREEN}Restored ${BLUE}${_path}${GREEN} to ${BLUE}${_oldVar}${GREEN} !${OFF}"
+    return 0
+  done
+  errMsg "Failed to restore ${*:3}..."
+  return 1
+}
+
 function editBluetooth() {
   echo "Detecting Bluetooth..."
-  getPlistHelper 'config.plist' ":ACPI:Add" 'Path = SSDT-USB-USBBT.aml' ':Path'
+  [[ -z "$efi_work_dir" ]] && errMsg "No work directory found. Try to download firts?"&&exit 1
+  [[ -z "$EFI_DIR" ]] && mount_efi
+
+  restorePlist "${EFI_DIR}/EFI/OC/config.plist" "${efi_work_dir}/OC/config.plist" ":ACPI:Add" "Path = SSDT-USB.aml" ":Enabled"
+  restorePlist "${EFI_DIR}/EFI/OC/config.plist" "${efi_work_dir}/OC/config.plist" ":ACPI:Add" "Path = SSDT-USB-USBBT.aml" ":Enabled"
+  restorePlist "${EFI_DIR}/EFI/OC/config.plist" "${efi_work_dir}/OC/config.plist" ":ACPI:Add" "Path = SSDT-USB-WLAN-LTEBT.aml" ":Enabled"
+  restorePlist "${EFI_DIR}/EFI/OC/config.plist" "${efi_work_dir}/OC/config.plist" ":ACPI:Add" "Path = SSDT-USB-FingerBT.aml" ":Enabled"
 }
+
+
+function 
 #installEFI
 #downloadEFI
+editBluetooth
 
-  getPlistHelper 'config.plist' ':ACPI' ':Add' 'Path = SSDT-USB.*' ":Path"
 #getPlistHelper 'config.plist' ":ACPI" ":Add" 'Path = SSDT-USB-USBBT.aml' ':Path'
 
 #$PLEDIT "config.plist" -c "Print :ACPI:Add" | searchPlistArray 'Path = SSDT-USB-USBBT.aml'
