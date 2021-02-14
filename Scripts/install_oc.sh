@@ -41,10 +41,10 @@ function mountEFI() {
     exit 1
 
   # check whether EFI/OC exists
-  elif [[ ! -e "${EFI_DIR}/EFI/OC" ]]; then
-    echo -e "[ ${RED}ERROR${OFF} ]: Failed to detect OC folder"
-    unmountEFI
-    exit 1
+elif [[ ! -e "${EFI_DIR}/EFI/OC" ]]; then
+  echo -e "[ ${RED}ERROR${OFF} ]: Failed to detect OC folder"
+  unmountEFI
+  exit 1
   fi
 
   echo -e "[ ${GREEN}OK${OFF} ]Mounted EFI at ${EFI_DIR} (credits RehabMan)"
@@ -90,7 +90,7 @@ function readInteger() {
     read -p "${BLUE}${1} ${GREEN}[$2-$3]:${OFF} "  _input
     if [[ "$_input" =~ ^[0-9]+$ ]] && [[ "$_input" -ge "$2" ]] && [[ "$_input" -le "$3" ]] ;then
       return "$_input"
-    #else
+      #else
       #echo -e "${RED} Enter a integer between [$2 - $3]${OFF}"
     fi
   done
@@ -99,7 +99,7 @@ function readInteger() {
 function downloadEFI() {
   setupEnviroment
   local _downloadList=($(getGitHubLatestRelease | tr -d '"'))
-  
+
   # Select download
   echo "Select your version:"
   local _downloadListLen=${#_downloadList[@]}
@@ -231,16 +231,16 @@ function restorePlist() {
 
       # Change path format, plutil use '.' as separetor
       local _newPath=$(echo -n $_path | tr ':' '.') 
-      
+
       #plutil should be at PATH
       "$PLUTIL" -replace "$_newPath" -data "$_oldVarXml" "$2" || break
     else
-    "$PLEDIT" "$2" -c "Set $_path $_oldVar" || break
-    
+      "$PLEDIT" "$2" -c "Set $_path $_oldVar" || break
+
     # Save the change, maybe it's better to commit the change after
     # But for better consistency with plutil we save at every change.
     "$PLEDIT" "$2" -c "Save" || break
-      
+
     fi
     echo -e "${GREEN}Restored ${BLUE}${_path}${GREEN} to ${BLUE}${_oldVar}${GREEN} !${OFF}"
     return 0
@@ -254,10 +254,17 @@ function restoreBluetooth() {
   [[ -z "$efi_work_dir" ]] && errMsg "No work directory found. Try to download firts?"&&exit 1
   [[ -z "$EFI_DIR" ]] && mount_efi
 
+  # SSDT
   restorePlist "${EFI_DIR}/EFI/OC/config.plist" "${efi_work_dir}/OC/config.plist" ":ACPI:Add" "Path = SSDT-USB.aml" ":Enabled"
   restorePlist "${EFI_DIR}/EFI/OC/config.plist" "${efi_work_dir}/OC/config.plist" ":ACPI:Add" "Path = SSDT-USB-USBBT.aml" ":Enabled"
   restorePlist "${EFI_DIR}/EFI/OC/config.plist" "${efi_work_dir}/OC/config.plist" ":ACPI:Add" "Path = SSDT-USB-WLAN-LTEBT.aml" ":Enabled"
   restorePlist "${EFI_DIR}/EFI/OC/config.plist" "${efi_work_dir}/OC/config.plist" ":ACPI:Add" "Path = SSDT-USB-FingerBT.aml" ":Enabled"
+
+  # Kext
+  restorePlist "${EFI_DIR}/EFI/OC/config.plist" "${efi_work_dir}/OC/config.plist" ":ACPI:Add" "BundlePath = IntelBluetoothFirmware.kext" ":Enabled"
+  restorePlist "${EFI_DIR}/EFI/OC/config.plist" "${efi_work_dir}/OC/config.plist" ":ACPI:Add" "BundlePath = IntelBluetoothInjector.kext" ":Enabled"
+
+  # TODO AirportBrcmFixup and BrcmBluetoothInjector...
 }
 
 
@@ -279,6 +286,15 @@ function restoreDVMT() {
   echo Done!
 }
 
+function restore0xE2() {
+  echo -e "${GREEN}Restoring DVMT...${OFF}"
+  [[ -z "$efi_work_dir" ]] && errMsg "No work directory found. Try to download firts?"&&exit 1
+  [[ -z "$EFI_DIR" ]] && mount_efi
+
+  restorePlist "${EFI_DIR}/EFI/OC/config.plist" "${efi_work_dir}/OC/config.plist" ':Kernel:Quirks:AppleXcpmCfgLock'
+
+  echo Done!
+}
 #installEFI
 #downloadEFI
 editBluetooth
