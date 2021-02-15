@@ -208,6 +208,14 @@ function deletePlistIfNotExist() {
 
 }
 
+function getBinaryDataInBase64() {
+  # Parse PlistBuddy xml format and filter data in base64
+  # The input is PlistBuddy with -x flag
+  # Return the data in base64 to stdout
+  perl -0777 -ne 'if(/<data>\n(.*)\n<\/data>/s){print "$1";exit 0}else{exit 1}'
+}
+
+
 function restorePlist() {
   # Set Old efi file value to new efi file
   # $! Old EFI file
@@ -218,19 +226,19 @@ function restorePlist() {
   while :; do
     local _path=$(getPlistHelper "$1" "${@:3}") || break
     local _oldVar=$("$PLEDIT" "$1" -c "Print $_path") || break
-    local _oldVarXml=$("$PLEDIT" "$1" -x -c "Print $_path") || break
+    local _oldVarXml=$("$PLEDIT" "$1" -x -c "Print $_path" | getBinaryDataInBase64)
     if [[ -z "$_oldVarXml" ]];then
       errMsg "Properties not found: $_path"
       errMsg "Skiping!!!..."
-      break;
+      return 0
     fi
-    if [[ "$_oldVar" != "$_oldVarXml" ]];then
+    if [[ -n "$_oldVarXml" ]];then
       # Binary data
       # Switch to plutil as PlistBuddy expect binary input that bash cannot pass as parameters
       # And plutil take base64 for data.
 
-      # Change path format, plutil use '.' as separetor
-      local _newPath=$(echo -n $_path | tr ':' '.') 
+      # Change path format, plutil use '.' as separetor and eliminate the starting ':' as well
+      local _newPath=$(echo -n "$_path" | perl -pe 's/^://;' -e 's/:/\./g') 
 
       #plutil should be at PATH
       "$PLUTIL" -replace "$_newPath" -data "$_oldVarXml" "$2" || break
@@ -283,7 +291,7 @@ function restoreDVMT() {
   deletePlistIfNotExist "${EFI_DIR}/EFI/OC/config.plist" "${efi_work_dir}/OC/config.plist" ':DeviceProperties:Add:PciRoot(0x0)/Pci(0x2,0x0):framebuffer-con0-flags'
   deletePlistIfNotExist "${EFI_DIR}/EFI/OC/config.plist" "${efi_work_dir}/OC/config.plist" ':DeviceProperties:Add:PciRoot(0x0)/Pci(0x2,0x0):framebuffer-con1-flags'
   deletePlistIfNotExist "${EFI_DIR}/EFI/OC/config.plist" "${efi_work_dir}/OC/config.plist" ':DeviceProperties:Add:PciRoot(0x0)/Pci(0x2,0x0):framebuffer-con2-flags'
-  echo Done!
+  echo -e "${GREEN}Done!${OFF}"
 }
 
 function restore0xE2() {
@@ -293,8 +301,61 @@ function restore0xE2() {
 
   restorePlist "${EFI_DIR}/EFI/OC/config.plist" "${efi_work_dir}/OC/config.plist" ':Kernel:Quirks:AppleXcpmCfgLock'
 
-  echo Done!
+  echo -e "${GREEN}Done!${OFF}"
 }
+
+function restorePlatformInfo() {
+  echo -e "${GREEN}Restoring DVMT...${OFF}"
+  [[ -z "$efi_work_dir" ]] && errMsg "No work directory found. Try to download firts?"&&exit 1
+  [[ -z "$EFI_DIR" ]] && mount_efi
+
+
+  restorePlist "${EFI_DIR}/EFI/OC/config.plist" "${efi_work_dir}/OC/config.plist" ':PlatformInfo:Generic:ROM'
+  restorePlist "${EFI_DIR}/EFI/OC/config.plist" "${efi_work_dir}/OC/config.plist" ':PlatformInfo:Generic:SystemSerialNumber'
+  restorePlist "${EFI_DIR}/EFI/OC/config.plist" "${efi_work_dir}/OC/config.plist" ':PlatformInfo:Generic:SystemProductName'
+  restorePlist "${EFI_DIR}/EFI/OC/config.plist" "${efi_work_dir}/OC/config.plist" ':PlatformInfo:Generic:SystemUUID'
+  restorePlist "${EFI_DIR}/EFI/OC/config.plist" "${efi_work_dir}/OC/config.plist" ':PlatformInfo:Generic:MLB'
+
+  echo -e "${GREEN}Done!${OFF}"
+}
+
+function restoreMiscPreference() {
+  echo -e "${GREEN}Restoring DVMT...${OFF}"
+  [[ -z "$efi_work_dir" ]] && errMsg "No work directory found. Try to download firts?"&&exit 1
+  [[ -z "$EFI_DIR" ]] && mount_efi
+
+  restorePlist "${EFI_DIR}/EFI/OC/config.plist" "${efi_work_dir}/OC/config.plist" ':Misc:Boot:PickerMode'
+  restorePlist "${EFI_DIR}/EFI/OC/config.plist" "${efi_work_dir}/OC/config.plist" ':Misc:Boot:Timeout'
+  restorePlist "${EFI_DIR}/EFI/OC/config.plist" "${efi_work_dir}/OC/config.plist" ':Misc:Boot:ShowPicker'
+  restorePlist "${EFI_DIR}/EFI/OC/config.plist" "${efi_work_dir}/OC/config.plist" ':Misc:Boot:TakeoffDelay'
+
+  # For intel wifi
+  restorePlist "${EFI_DIR}/EFI/OC/config.plist" "${efi_work_dir}/OC/config.plist" ':Misc:Security:DmgLoading'
+  restorePlist "${EFI_DIR}/EFI/OC/config.plist" "${efi_work_dir}/OC/config.plist" ':Misc:Security:SecureBootModel'
+  echo -e "${GREEN}Done!${OFF}"
+}
+
+function restoreOptionalKext() {
+  echo -e "${GREEN}Restoring DVMT...${OFF}"
+  [[ -z "$efi_work_dir" ]] && errMsg "No work directory found. Try to download firts?"&&exit 1
+  [[ -z "$EFI_DIR" ]] && mount_efi
+
+  # Intel Wifi Force
+  restorePlist "${EFI_DIR}/EFI/OC/config.plist" "${efi_work_dir}/OC/config.plist" ':Kernel:Force' 'BundlePath = System/Library/Extensions/corecapture.kext' ':Enabled'
+  restorePlist "${EFI_DIR}/EFI/OC/config.plist" "${efi_work_dir}/OC/config.plist" ':Kernel:Force' 'BundlePath = System/Library/Extensions/IO80211Family.kext' ':Enabled'
+  restorePlist "${EFI_DIR}/EFI/OC/config.plist" "${efi_work_dir}/OC/config.plist" ':Kernel:Add' 'BundlePath = AirportItlwm_Big_Sur.kext' ':Enabled'
+  restorePlist "${EFI_DIR}/EFI/OC/config.plist" "${efi_work_dir}/OC/config.plist" ':Kernel:Add' 'BundlePath = AirportItlwm_Catalina.kext' ':Enabled'
+  restorePlist "${EFI_DIR}/EFI/OC/config.plist" "${efi_work_dir}/OC/config.plist" ':Kernel:Add' 'BundlePath = AirportItlwm_High_Sierra.kext' ':Enabled'
+  restorePlist "${EFI_DIR}/EFI/OC/config.plist" "${efi_work_dir}/OC/config.plist" ':Kernel:Add' 'BundlePath = AirportItlwm_Mojave.kext' ':Enabled'
+
+  restorePlist "${EFI_DIR}/EFI/OC/config.plist" "${efi_work_dir}/OC/config.plist" ':Kernel:Add' 'BundlePath = NullEthernet.kext' ':Enabled'
+  restorePlist "${EFI_DIR}/EFI/OC/config.plist" "${efi_work_dir}/OC/config.plist" ':Kernel:Add' 'BundlePath = NVMeFix.kext' ':Enabled'
+  restorePlist "${EFI_DIR}/EFI/OC/config.plist" "${efi_work_dir}/OC/config.plist" ':Kernel:Add' 'BundlePath = HibernationFixup.kext' ':Enabled'
+
+  echo -e "${GREEN}Done!${OFF}"
+}
+
+
 #installEFI
 #downloadEFI
 editBluetooth
