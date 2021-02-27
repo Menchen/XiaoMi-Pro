@@ -24,7 +24,7 @@ function networkWarn() {
 }
 
 function errMsg(){
-  echo -e "${RED}${*}${OFF}"
+  echo -e "${RED}${*}${OFF} ${BLUE}${LINENO}${OFF}"
 }
 # Mount EFI by using mount_efi.sh, credits Rehabman
 function mountEFI() {
@@ -78,10 +78,12 @@ function setupEnviroment() {
 }
 
 function getGitHubLatestRelease() {
-  local _jsonData=$(curl --silent 'https://api.github.com/repos/daliansky/XiaoMi-Pro-Hackintosh/releases/latest')
+	#$1 Github repo name, 'daliansky/XiaoMi-Pro-Hackintosh'
+	#$2 Download filter
+  local _jsonData=$(curl --silent 'https://api.github.com/repos/'"${1}"'/releases/latest')
   [[ $? == 0 ]] || networkWarn
   # Parse JSON to OC only
-  echo -n -E "$_jsonData" | $jq '.assets | map(select(.name|test("-OC-"))) | .[].browser_download_url'
+  echo -n -E "$_jsonData" | $jq '.assets | map(select(.name|test("'"${2}"'"))) | .[].browser_download_url' | tr -d '"'
 }
 
 function readInteger() {
@@ -89,7 +91,7 @@ function readInteger() {
   while :; do
     read -p "${BLUE}${1} ${GREEN}[$2-$3]:${OFF} "  _input
     if [[ "$_input" =~ ^[0-9]+$ ]] && [[ "$_input" -ge "$2" ]] && [[ "$_input" -le "$3" ]] ;then
-      return "$_input"
+      echo "$_input"
       #else
       #echo -e "${RED} Enter a integer between [$2 - $3]${OFF}"
     fi
@@ -98,7 +100,7 @@ function readInteger() {
 
 function downloadEFI() {
   setupEnviroment
-  local _downloadList=($(getGitHubLatestRelease | tr -d '"'))
+  local _downloadList=($(getGitHubLatestRelease "daliansky/XiaoMi-Pro-Hackintosh" '-OC-'))
 
   # Select download
   echo "Select your version:"
@@ -107,20 +109,17 @@ function downloadEFI() {
     echo "$_i:"
     echo "     ${_downloadList[$_i]}"
   done
-  readInteger "Select a version" 0 $((${_downloadListLen}-1))
-  local _version=$?
+  local _version=$(readInteger "Select a version" 0 $((${_downloadListLen}-1)))
   #echo $_version
 
   # Download and extract
   curl -L -# -o "XiaoMi_EFI.zip" ${_downloadList[$_version]}
   unzip -qu "XiaoMi_EFI.zip"
   local _dirname=$(echo ${_downloadList[$_version]}|grep -o '[^/]*\.zip'|sed -e 's/\.zip//g')
-  if ![[ -d "./${_dirname}" ]];then
-    echo "${RED} Downloaded folder not found! Open a issue for a script update. ${OFF}"
+  if ! [[ -d "./${_dirname}" ]];then
+    errMsg "Downloaded folder not found! Open a issue for a script update."
   fi
-  cd "${_dirname}"
   efi_work_dir="${PWD}/${_dirname}/EFI"
-  cd ..
 }
 
 function backupEFI() {
@@ -177,7 +176,7 @@ function getPlistHelper(){
     echo -n "$2"
     return 0
   fi
-  if [[ "$(echo $3|cut -c1)" == ":" ]];then
+  if [[ "$(echo "$3"|cut -c1)" == ":" ]];then
     # Plist Path
     getPlistHelper "$1" "${2}${3}" "${@:4}"
   else
@@ -215,16 +214,23 @@ function getBinaryDataInBase64() {
   perl -0777 -ne 'if(/<data>\n(.*)\n<\/data>/s){print "$1";exit 0}else{exit 1}'
 }
 
+function getPlist() {
+	# $1 PList file
+	# $2+ Plist path or array regex
+    local _path=$(getPlistHelper "$1" "${@:2}") || break
+	"$PLEDIT" "$1" -c "Print $_path"
+}
 
 function restorePlist() {
   # Set Old efi file value to new efi file
-  # $! Old EFI file
-  # $2 New EFI file
+  # $! Old PList file
+  # $2 New PList file
   # $3+ Plist path or array regex
 
 
   while :; do
     local _path=$(getPlistHelper "$1" "${@:3}") || break
+    local _newPath=$(getPlistHelper "$2" "${@:3}") || break
     local _oldVar=$("$PLEDIT" "$1" -c "Print $_path") || break
     local _oldVarXml=$("$PLEDIT" "$1" -x -c "Print $_path" | getBinaryDataInBase64)
     if [[ -z "$_oldVarXml" ]];then
@@ -238,16 +244,16 @@ function restorePlist() {
       # And plutil take base64 for data.
 
       # Change path format, plutil use '.' as separetor and eliminate the starting ':' as well
-      local _newPath=$(echo -n "$_path" | perl -pe 's/^://;' -e 's/:/\./g') 
+      local _fixedNewPath=$(echo -n "$_path" | perl -pe 's/^://;' -e 's/:/\./g') 
 
       #plutil should be at PATH
-      "$PLUTIL" -replace "$_newPath" -data "$_oldVarXml" "$2" || break
+      "$PLUTIL" -replace "$_fixedNewPath" -data "$_oldVarXml" "$2" || break
     else
-      "$PLEDIT" "$2" -c "Set $_path $_oldVar" || break
+      "$PLEDIT" "$2" -c "Set $_newPath $_oldVar" || break
 
     # Save the change, maybe it's better to commit the change after
     # But for better consistency with plutil we save at every change.
-    "$PLEDIT" "$2" -c "Save" || break
+    #"$PLEDIT" "$2" -c "Save" || break
 
     fi
     echo -e "${GREEN}Restored ${BLUE}${_path}${GREEN} to ${BLUE}${_oldVar}${GREEN} !${OFF}"
@@ -256,6 +262,44 @@ function restorePlist() {
   errMsg "Failed to restore ${*:3}..."
   return 1
 }
+
+function restoreBootArgs() {
+	echo -e "${GREEN}Restoring boot args...${OFF}"
+	[[ -z "$efi_work_dir" ]] && errMsg "No work directory found. Try to download firts?"&&exit 1
+	[[ -z "$EFI_DIR" ]] && mount_efi
+	while :;do
+		local _old_config="${EFI_DIR}/EFI/OC/config.plist"
+		local _new_config="${efi_work_dir}/OC/config.plist"
+		local _path=$(getPlistHelper "_old_config" ':NVRAM:Add:7C436110-AB2A-4BBB-A880-FE41995C9F82:boot-args') || break
+		local _newPath=$(getPlistHelper "_new_config" ':NVRAM:Add:7C436110-AB2A-4BBB-A880-FE41995C9F82:boot-args') || break
+		local _oldVar=$("$PLEDIT" "_old_config" -c "Print $_path") || break
+		local _newVar=$("$PLEDIT" "_new_config" -c "Print $_newPath") || break
+
+
+		echo -e "${BLUE}1:${OFF} Old boot args"
+		echo -e "<${_oldVar}>\n"
+		echo -e "${BLUE}2:${OFF}"
+		echo -e "<${_newVar}>\n"
+		echo -e "${BLUE}3:${OFF} Custom boot args ${RED}ADVANCED USER ONLY${OFF}\n"
+		local _selection=$(readInteger "Select a version" 1 3)
+		# TODO Better selection menu with ability to go back
+		if [[ ${_selection} -eq 1 ]];then
+			restorePlist "${_old_config}" "${_new_config}" ":NVRAM:Add:7C436110-AB2A-4BBB-A880-FE41995C9F82:boot-args"
+		else
+			if [[${_selection} -eq 3]];then
+				echo -e "${GREEN}Input a custom boot args:"
+				local _readVar
+				read _readVar
+				"$PLEDIT" "${_new_config}" -c "Set $_newPath ${_readVar}" || break
+			fi
+		fi
+		return 0
+	done
+	errMsg "Error reading boot args... Aborting"
+	exit 1
+}
+
+
 
 function restoreBluetooth() {
   echo -e "${GREEN}Restoring Bluetooth...${OFF}"
@@ -273,6 +317,7 @@ function restoreBluetooth() {
   restorePlist "${EFI_DIR}/EFI/OC/config.plist" "${efi_work_dir}/OC/config.plist" ":ACPI:Add" "BundlePath = IntelBluetoothInjector.kext" ":Enabled"
 
   # TODO AirportBrcmFixup and BrcmBluetoothInjector...
+
 }
 
 
@@ -335,22 +380,117 @@ function restoreMiscPreference() {
   echo -e "${GREEN}Done!${OFF}"
 }
 
+function restoreBrcmPatchRAM() {
+	[[ -z "$efi_work_dir" ]] && errMsg "No work directory found. Try to download firts?"&&exit 1
+	[[ -z "$EFI_DIR" ]] && mount_efi
+	local _old_config="${EFI_DIR}/EFI/OC/config.plist"
+	local _new_config="${efi_work_dir}/OC/config.plist"
+
+
+	local _flag
+	local _brcmInjector=$(getPlist "${_old_config}" ':Kernel:Add' 'BundlePath = BrcmBluetoothInjector.kext' ':Enabled')||_flag=1
+	local _brcmFirmwareData=$(getPlist "${_old_config}" ':Kernel:Add' 'BundlePath = BrcmFirmwareData.kext' ':Enabled')||_flag=1
+	local _brcmRAM3=$(getPlist "${_old_config}" ':Kernel:Add' 'BundlePath = BrcmPatchRAM3.kext' ':Enabled')||_flag=1
+
+
+	if [[ -n "$_flag" ]];then
+		echo -e "${GREEN}Downloading BrcmPatchRAM...${OFF}"
+
+		local _patchRAMLink=$(getGitHubLatestRelease "acidanthera/BrcmPatchRAM" 'RELEASE')
+
+		curl -L -# -o "BrcmPatchRAM.zip" "${_patchRAMLink}"
+		ditto -x -k "./BrcmPatchRAM.zip" .
+
+		local _dirname=$(echo ${_patchRAMLink}|grep -o '[^/]*\.zip'|sed -e 's/\.zip//g')
+
+		if ! [[ -d "./${_dirname}" ]];then
+			errMsg "Downloaded folder not found! Open a issue for a script update."
+			return 1
+		fi
+		local _patchRAMDir="${PWD}/${_dirname}/"
+
+		[[ "$_brcmInjector" == "true" ]] && cp -r "${_patchRAMDir}/BrcmBluetoothInjector.kext" "${efi_work_dir}/OC/Kexts/" && ${PLEDIT} -x -c "Merge ./patch/BrcmBluetoothInjector.plist :Kernel:Add" "${_new_config}" && echo -e "${GREEN}Restored BrcmBluetoothInjector${OFF}"
+		[[ "$_brcmFirmwareData" == "true" ]] && cp -r "${_patchRAMDir}/BrcmFirmwareData.kext" "${efi_work_dir}/OC/Kexts/" && ${PLEDIT} -x -c "Merge ./patch/BrcmFirmwareData.plist :Kernel:Add" "${_new_config}" && echo -e "${GREEN}Restored BrcmFirmwareData${OFF}"
+		[[ "$_brcmRAM3" == "true" ]] && cp -r "${_patchRAMDir}/BrcmPatchRAM3.kext" "${efi_work_dir}/OC/Kexts/" && ${PLEDIT} -x -c "Merge ./patch/BrcmPatchRAM3.plist :Kernel:Add" "${_new_config}" && echo -e "${GREEN}Restored BrcmPatchRAM3${OFF}"
+	fi
+
+}
+
+function restoreAirportFixup(){
+  local _brcmAirport=$(getPlist "${_old_config}" ':Kernel:Add' 'BundlePath = AirportBrcmFixup.kext' ':Enabled')
+  if [[ "$_brcmAirport" == "true" ]];then
+	  echo -e "${GREEN}Downloading BrcmPatchRAM...${OFF}"
+	  local _airportBrcmLink=$(getGitHubLatestRelease "acidanthera/AirportBrcmFixup" 'RELEASE')
+
+	  curl -L -# -o "AirportBrcmFixup.zip" "${_airportBrcmLink}"
+	  ditto -x -k "./AirportBrcmFixup.zip" .
+	local _dirname=$(echo ${_airportBrcmLink}|grep -o '[^/]*\.zip'|sed -e 's/\.zip//g')
+
+
+	  if ! [[ -d "./${_dirname}" ]];then
+		  errMsg "Downloaded folder not found! Open a issue for a script update."
+		  return 1
+	  fi
+	  local _patchRAMDir="${PWD}/${_dirname}/"
+
+	  cp -r "${_airportBrcmLink}/AirportBrcmFixup.kext" "${efi_work_dir}/OC/Kexts/" && ${PLEDIT} -x -c "Merge ./patch/AirportBrcmFixup.plist :Kernel:Add" "${_new_config}" && echo -e "${GREEN}Restored AirportBrcmFixup${OFF}"
+
+  fi
+
+}
+
 function restoreOptionalKext() {
-  echo -e "${GREEN}Restoring DVMT...${OFF}"
-  [[ -z "$efi_work_dir" ]] && errMsg "No work directory found. Try to download firts?"&&exit 1
-  [[ -z "$EFI_DIR" ]] && mount_efi
+	echo -e "${GREEN}Restoring DVMT...${OFF}"
+	[[ -z "$efi_work_dir" ]] && errMsg "No work directory found. Try to download firts?"&&exit 1
+	[[ -z "$EFI_DIR" ]] && mount_efi
+	local _old_config="${EFI_DIR}/EFI/OC/config.plist"
+	local _new_config="${efi_work_dir}/OC/config.plist"
 
-  # Intel Wifi Force
-  restorePlist "${EFI_DIR}/EFI/OC/config.plist" "${efi_work_dir}/OC/config.plist" ':Kernel:Force' 'BundlePath = System/Library/Extensions/corecapture.kext' ':Enabled'
-  restorePlist "${EFI_DIR}/EFI/OC/config.plist" "${efi_work_dir}/OC/config.plist" ':Kernel:Force' 'BundlePath = System/Library/Extensions/IO80211Family.kext' ':Enabled'
-  restorePlist "${EFI_DIR}/EFI/OC/config.plist" "${efi_work_dir}/OC/config.plist" ':Kernel:Add' 'BundlePath = AirportItlwm_Big_Sur.kext' ':Enabled'
-  restorePlist "${EFI_DIR}/EFI/OC/config.plist" "${efi_work_dir}/OC/config.plist" ':Kernel:Add' 'BundlePath = AirportItlwm_Catalina.kext' ':Enabled'
-  restorePlist "${EFI_DIR}/EFI/OC/config.plist" "${efi_work_dir}/OC/config.plist" ':Kernel:Add' 'BundlePath = AirportItlwm_High_Sierra.kext' ':Enabled'
-  restorePlist "${EFI_DIR}/EFI/OC/config.plist" "${efi_work_dir}/OC/config.plist" ':Kernel:Add' 'BundlePath = AirportItlwm_Mojave.kext' ':Enabled'
+  # Intel Wifi Force load kext
+  restorePlist "${_old_config}" "${_new_config}" ':Kernel:Force' 'BundlePath = System/Library/Extensions/corecapture.kext' ':Enabled'
+  restorePlist "${_old_config}" "${_new_config}" ':Kernel:Force' 'BundlePath = System/Library/Extensions/IO80211Family.kext' ':Enabled'
 
-  restorePlist "${EFI_DIR}/EFI/OC/config.plist" "${efi_work_dir}/OC/config.plist" ':Kernel:Add' 'BundlePath = NullEthernet.kext' ':Enabled'
-  restorePlist "${EFI_DIR}/EFI/OC/config.plist" "${efi_work_dir}/OC/config.plist" ':Kernel:Add' 'BundlePath = NVMeFix.kext' ':Enabled'
-  restorePlist "${EFI_DIR}/EFI/OC/config.plist" "${efi_work_dir}/OC/config.plist" ':Kernel:Add' 'BundlePath = HibernationFixup.kext' ':Enabled'
+  restorePlist "${_old_config}" "${_new_config}" ':Kernel:Add' 'BundlePath = AirportItlwm_Big_Sur.kext' ':Enabled'
+  restorePlist "${_old_config}" "${_new_config}" ':Kernel:Add' 'BundlePath = AirportItlwm_Catalina.kext' ':Enabled'
+  restorePlist "${_old_config}" "${_new_config}" ':Kernel:Add' 'BundlePath = AirportItlwm_High_Sierra.kext' ':Enabled'
+  restorePlist "${_old_config}" "${_new_config}" ':Kernel:Add' 'BundlePath = AirportItlwm_Mojave.kext' ':Enabled'
+
+  restorePlist "${_old_config}" "${_new_config}" ':Kernel:Add' 'BundlePath = NullEthernet.kext' ':Enabled'
+  restorePlist "${_old_config}" "${_new_config}" ':Kernel:Add' 'BundlePath = NullEthernet.kext' ':Enabled'
+
+
+  restorePlist "${_old_config}" "${_new_config}" ':Kernel:Add' 'BundlePath = NVMeFix.kext' ':Enabled'
+  restorePlist "${_old_config}" "${_new_config}" ':Kernel:Add' 'BundlePath = HibernationFixup.kext' ':Enabled'
+
+  echo -e "${GREEN}Checking optional Kext's${OFF}"
+
+  local _flag
+  local _brcmInjector=$(getPlist "${_old_config}" ':Kernel:Add' 'BundlePath = BrcmBluetoothInjector.kext' ':Enabled')||_flag=1
+  local _brcmFirmwareData=$(getPlist "${_old_config}" ':Kernel:Add' 'BundlePath = BrcmFirmwareData.kext' ':Enabled')||_flag=1
+  local _brcmRAM3=$(getPlist "${_old_config}" ':Kernel:Add' 'BundlePath = BrcmPatchRAM3.kext' ':Enabled')||_flag=1
+  local _brcmAirport=$(getPlist "${_old_config}" ':Kernel:Add' 'BundlePath = AirportBrcmFixup.kext' ':Enabled')
+
+  if [[ -n "$_flag" ]];then
+	  echo -e "${GREEN}Downloading BrcmPatchRAM...${OFF}"
+
+	  local _patchRAMLink=$(getGitHubLatestRelease "acidanthera/BrcmPatchRAM" 'RELEASE')
+
+	  curl -L -# -o "BrcmPatchRAM.zip" "${_patchRAMLink}"
+	  ditto -x -k "./BrcmPatchRAM.zip" .
+	  
+
+	  if ! [[ -d "./${_dirname}" ]];then
+		errMsg "Downloaded folder not found! Open a issue for a script update."
+	  fi
+	  local _patchRAMDir="${PWD}/$(echo ${_patchRAMLink}|grep -o '[^/]*\.zip'|sed -e 's/\.zip//g')/"
+
+	  [[ "$_brcmInjector" == "true" ]] && cp -r "${_patchRAMDir}/BrcmBluetoothInjector.kext" "${efi_work_dir}/OC/Kexts/" && ${PLEDIT} -x -c "Merge ./patch/BrcmBluetoothInjector.plist :Kernel:Add" "${_new_config}" && echo -e "${GREEN}Restored BrcmBluetoothInjector${OFF}"
+	  [[ "$_brcmFirmwareData" == "true" ]] && cp -r "${_patchRAMDir}/BrcmFirmwareData.kext" "${efi_work_dir}/OC/Kexts/" && ${PLEDIT} -x -c "Merge ./patch/BrcmFirmwareData.plist :Kernel:Add" "${_new_config}" && echo -e "${GREEN}Restored BrcmFirmwareData${OFF}"
+	  [[ "$_brcmRAM3" == "true" ]] && cp -r "${_patchRAMDir}/BrcmPatchRAM3.kext" "${efi_work_dir}/OC/Kexts/" && ${PLEDIT} -x -c "Merge ./patch/BrcmPatchRAM3.plist :Kernel:Add" "${_new_config}" && echo -e "${GREEN}Restored BrcmPatchRAM3${OFF}"
+  fi
+  restoreBrcmPatchRAM
+  restoreAirportFixup
+
 
   echo -e "${GREEN}Done!${OFF}"
 }
