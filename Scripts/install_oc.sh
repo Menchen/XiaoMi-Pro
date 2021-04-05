@@ -74,7 +74,7 @@ function setupEnviroment() {
         curl -o 'jq' -L 'https://github.com/stedolan/jq/releases/download/jq-1.6/jq-osx-amd64' || networkWarn
         jq='.jq'
         chmod +x $jq
-        echo Done!
+		echo -e "${GREEN}Done!${OFF}"
     fi
     echo "The work directory is: "
     echo $tempFolder
@@ -174,8 +174,16 @@ function searchPlistArray(){
     # !!! The script find the first match and calculate the index of array of most upper level that contain it
     # !!! You should add indent to regex patter if the input contain nested structure!
     # !!! The regex match to Print of PlistBuddy, not the original file. The formats are differents.
-    perl -n -e 'BEGIN{$n=0}' -e 'if(/^( *)Array \{$/){if($n==0){$a=$1}else{exit 1}}' -e 'if(/^$a    \}$/){$n++}' -e 'if(/^$a\}$/){exit 0}' -e '{if(/'"${1}"'/){print $n;exit 0}}' -
-    return $?
+
+	# Fix / to \/, escape for perl.
+	local _regex=$(echo -n -E "${1}" | perl -pe 's/\//\\\//g') 
+    perl -n -e 'BEGIN{$n=0}' -e 'if(/^( *)Array \{$/){if($n==0){$a=$1}else{exit 1}}' -e 'if(/^$a    \}$/){$n++}' -e 'if(/^$a\}$/){exit 0}' -e '{if(/'"${_regex}"'/){print $n;exit 0}}' -
+	local _r=$?
+	#if [[ ! $_r -eq 0 ]];then
+		#echo "${RED}L:"${BASH_LINENO[$((2))]}"${OFF}"
+	#fi
+
+    return $_r
 }
 
 function getPlistHelper(){
@@ -369,7 +377,7 @@ function restore0xE2() {
 }
 
 function restorePlatformInfo() {
-    echo -e "${GREEN}Restoring DVMT...${OFF}"
+    echo -e "${GREEN}Restoring PlatformInfo...${OFF}"
     [[ -z "$efi_work_dir" ]] && errMsg "No work directory found. Try to download firts?"&&exit 1
     [[ -z "$EFI_DIR" ]] && mount_efi
 
@@ -401,6 +409,7 @@ function restoreMiscPreference() {
 }
 
 function restoreBrcmPatchRAM() {
+    echo -e "${GREEN}Restoring BrcmPatchRAM...${OFF}"
     [[ -z "$efi_work_dir" ]] && errMsg "No work directory found. Try to download firts?"&&exit 1
     [[ -z "$EFI_DIR" ]] && mount_efi
     local _old_config="${EFI_DIR}/EFI/OC/config.plist"
@@ -433,10 +442,13 @@ function restoreBrcmPatchRAM() {
         [[ "$_brcmFirmwareData" == "true" ]] && cp -r "${_patchRAMDir}/BrcmFirmwareData.kext" "${efi_work_dir}/OC/Kexts/" && ${PLEDIT} -x -c "Merge ./patch/BrcmFirmwareData.plist :Kernel:Add" "${_new_config}" && echo -e "${GREEN}Restored BrcmFirmwareData${OFF}"
         [[ "$_brcmRAM3" == "true" ]] && cp -r "${_patchRAMDir}/BrcmPatchRAM3.kext" "${efi_work_dir}/OC/Kexts/" && ${PLEDIT} -x -c "Merge ./patch/BrcmPatchRAM3.plist :Kernel:Add" "${_new_config}" && echo -e "${GREEN}Restored BrcmPatchRAM3${OFF}"
     fi
+	echo -e "${GREEN}Done!${OFF}"
+
 
 }
 
 function restoreAirportFixup(){
+    echo -e "${GREEN}Restoring AirportFixup...${OFF}"
     local _brcmAirport=$(getPlist "${_old_config}" ':Kernel:Add' 'BundlePath = AirportBrcmFixup.kext' ':Enabled')
     if [[ "$_brcmAirport" == "true" ]];then
         echo -e "${GREEN}Downloading BrcmPatchRAM...${OFF}"
@@ -456,11 +468,12 @@ function restoreAirportFixup(){
         cp -r "${_airportBrcmLink}/AirportBrcmFixup.kext" "${efi_work_dir}/OC/Kexts/" && ${PLEDIT} -x -c "Merge ./patch/AirportBrcmFixup.plist :Kernel:Add" "${_new_config}" && echo -e "${GREEN}Restored AirportBrcmFixup${OFF}"
 
     fi
+	echo -e "${GREEN}Done!${OFF}"
 
 }
 
 function restoreOptionalKext() {
-    echo -e "${GREEN}Restoring DVMT...${OFF}"
+    echo -e "${GREEN}Restoring Optional Kext's...${OFF}"
     [[ -z "$efi_work_dir" ]] && errMsg "No work directory found. Try to download firts?"&&exit 1
     [[ -z "$EFI_DIR" ]] && mount_efi
     local _old_config="${EFI_DIR}/EFI/OC/config.plist"
@@ -481,11 +494,8 @@ function restoreOptionalKext() {
 
     restorePlist "${_old_config}" "${_new_config}" ':Kernel:Add' 'BundlePath = NVMeFix.kext' ':Enabled'
     restorePlist "${_old_config}" "${_new_config}" ':Kernel:Add' 'BundlePath = HibernationFixup.kext' ':Enabled'
+	echo -e "${GREEN}Done!${OFF}"
 
-    echo -e "${GREEN}Checking optional Kext's${OFF}"
-
-
-    echo -e "${GREEN}Done!${OFF}"
 }
 
 
@@ -494,12 +504,12 @@ function main(){
     setupEnviroment
     downloadEFI
     mountEFI
-    restoreDVMT
-    restore0xE2
-    restoreBluetooth
-    restoreBootArgs
-    restoreMiscPreference
-    restorePlatformInfo
+    #restoreDVMT
+    #restore0xE2
+    #restoreBluetooth
+    #restoreBootArgs
+    #restoreMiscPreference
+    #restorePlatformInfo
     restoreOptionalKext
     restoreBrcmPatchRAM
     restoreAirportFixup
