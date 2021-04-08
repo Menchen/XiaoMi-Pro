@@ -7,12 +7,31 @@ PLUTIL='/usr/bin/plutil'
 RELEASE_Dir=""
 
 # Display style setting
-BOLD=$'\033[1m'
-RED=$'\033[1;31m'
-GREEN=$'\033[1;32m'
-BLUE=$'\033[1;34m'
-OFF=$'\033[m'
+#BOLD=$'\u001b[1m'
+#UNDERLINE=$'\u001b[4m'
+#REVERSED=$'\u001b[7m'
+#RED=$'\u001b[31m'
+#GREEN=$'\u001b[32m'
+#BLUE=$'\u001b[34m'
+#CYAN=$'\u001b[36m'
+#OFF=$'\u001b[0m'
+#HEAD=$'\u001b[1000D'
+#UP=$'\u001b[{n}A'
 
+BOLD=$(tput bold)
+UNDERLINE=$(tput smul)
+REV=$(tput rev)
+BLACK=$(tput setaf 0)
+RED=$(tput setaf 1)
+GREEN=$(tput setaf 2)
+YELLOW=$(tput setaf 3)
+BLUE=$(tput setaf 4)
+CYAN=$(tput setaf 6)
+WHITE=$(tput setaf 7)
+OFF=$(tput sgr0)
+HEAD=$(tput cub 10000)
+HEADCLEAN="${HEAD}$(tput el)"
+UP=$(tput cuu1)
 
 # Tools
 jq='jq'
@@ -24,8 +43,8 @@ function networkWarn() {
 }
 
 function errMsg(){
-    local linen="${BASH_LINENO[$((1))]}"
-    echo -e "${RED}${*}${OFF} ${BLUE}L:${linen}${OFF}"
+    local linen="${BASH_LINENO[*]}"
+    echo -e "${RED}${*}${OFF} ${WHITE}L:${linen}${OFF}" 1>&2
 }
 # Mount EFI by using mount_efi.sh, credits Rehabman
 function mountEFI() {
@@ -67,34 +86,33 @@ function setupEnviroment() {
     [[ -n "$tempFolder" ]] && return
     tempFolder=$(mktemp -d)
     #tempFolder=debug
-    echo Using tmporary fodler: $tempFolder
-    cd $tempFolder
+    echo "${BLACK}Using tmporary fodler: $tempFolder${OFF}"
+    cd "$tempFolder" || exit 2
     if ! command -v jq &>/dev/null;then
         echo Downloading jq for json parsing
-        curl -o 'jq' -L 'https://github.com/stedolan/jq/releases/download/jq-1.6/jq-osx-amd64' || networkWarn
-        jq='.jq'
+        curl -# -f -o 'jq' -L 'https://github.com/stedolan/jq/releases/download/jq-1.6/jq-osx-amd64' || networkWarn
+        jq='./jq'
         chmod +x $jq
-		echo -e "${GREEN}Done!${OFF}"
+		echo -e "${CYAN}Done!${OFF}"
     fi
-    echo "The work directory is: "
-    echo $tempFolder
 }
 
 function getGitHubLatestRelease() {
     #$1 Github repo name, 'daliansky/XiaoMi-Pro-Hackintosh'
-    #$2 Download filter
-    local _jsonData=$(curl --silent 'https://api.github.com/repos/'"${1}"'/releases/latest')
-    [[ $? == 0 ]] || networkWarn
+    #$2 Download filter as regex
+    local _jsonData
+    _jsonData=$(curl -f --silent 'https://api.github.com/repos/'"${1}"'/releases/latest') || networkWarn
     # Parse JSON to OC only
     echo -n -E "$_jsonData" | $jq '.assets | map(select(.name|test("'"${2}"'"))) | .[].browser_download_url' | tr -d '"'
 }
 
 function readInteger() {
     local _input
+	printf '\n'
     while :; do
-        read -p "${BLUE}${1} ${GREEN}[$2-$3]:${OFF} "  _input
+        read -r -p "${YELLOW}${1} ${GREEN}[$2-$3]:${OFF} "  _input
         if [[ "$_input" =~ ^[0-9]+$ ]] && [[ "$_input" -ge "$2" ]] && [[ "$_input" -le "$3" ]] ;then
-            echo "$_input"
+            echo -n "$_input"
             return 0
             #else
             #echo -e "${RED} Enter a integer between [$2 - $3]${OFF}"
@@ -102,20 +120,37 @@ function readInteger() {
     done
 }
 
+function readYesNo(){
+	local yn
+	echo 
+	while true; do
+		read -r -n 1 -p "$1 ${BLUE}[yn]${OFF}" yn
+		case $yn in
+			[Yy]* ) return 0;;
+			[Nn]* ) return 1;;
+			* ) echo -e -n "${HEADCLEAN}";;
+		esac
+	done
+}
+
 function downloadEFI() {
-    local _downloadList=($(getGitHubLatestRelease "daliansky/XiaoMi-Pro-Hackintosh" '-OC-'))
+    local _downloadList
+	read -r -a _downloadList <<< "$(getGitHubLatestRelease "daliansky/XiaoMi-Pro-Hackintosh" '-OC-' | perl -pe 's/\n/ /')"
 
     #auto detect version
-    local _deviceId=$(ioreg -n XHC -c 'IOPCIDevice' -r -x -k "device-id" | perl -ne 'print $1 if(/^  \|   "device-id" = <((?:[0-9]|[a-f])*)>$/)')
+    local _deviceId
+    _deviceId=$(ioreg -n XHC -c 'IOPCIDevice' -r -x -k "device-id" | perl -ne 'print $1 if(/^  \|   "device-id" = <((?:[0-9]|[a-f])*)>$/)')
     local _version=-1
     case $_deviceId in
         "2f9d0000")
             # 8 Gen KBL
-            _version=$(echo -n "${_downloadList[@]}" | awk -F " " 'BEGIN {flag=0} /KBL/ {print NR-1;flag=1} END{if(flag==0){print -1}}')
+			echo -e "${GREEN}Detected KBL model...${OFF}"
+            _version=$(printf '%s\n' "${_downloadList[@]}" | awk 'BEGIN {flag=0} /KBL/ {print NR-1;flag=1} END{if(flag==0){print -1}}')
             ;;
         "ed020000")
             # CML
-            _version=$(echo -n "${_downloadList[@]}" | awk -F " " 'BEGIN {flag=0} /CML/ {print NR-1;flag=1} END{if(flag==0){print -1}}')
+			echo -e "${GREEN}Detected CML model...${OFF}"
+            _version=$(printf '%s\n' "${_downloadList[@]}" | awk 'BEGIN {flag=0} /CML/ {print NR-1;flag=1} END{if(flag==0){print -1}}')
             ;;
     esac
 
@@ -124,19 +159,22 @@ function downloadEFI() {
         echo "If you are using XiaoMi-Pro with 8th Gen CPU, then it's a KBL (Kaby Lake) machine. (Actually Kaby Lake Refresh)"
         echo "If you are using XiaoMi-Pro with 10th Gen CPU, then it's a CML (Comet Lake) machine."
         echo "Select your version from the list:"
-        local _downloadListLen=${#_downloadList[@]}
-        for _i in $(seq 0 $((${_downloadListLen}-1)));do
+        local _downloadListLen
+        _downloadListLen=${#_downloadList[@]}
+        for _i in $(seq 0 $((_downloadListLen - 1)));do
             echo -e "${GREEN}${_i}${OFF}:"
             echo "     ${_downloadList[$_i]}"
         done
-        _version=$(readInteger "Select a version" 0 $((${_downloadListLen}-1)))
+        _version=$(readInteger "Select a version" 0 $((_downloadListLen - 1)))
         #echo $_version
     fi
 
     # Download and extract
-    curl -L -# -o "XiaoMi_EFI.zip" ${_downloadList[$_version]}
+	echo -e "${GREEN}Downloading EFI from Github...${OFF}:"
+    curl -f -L -# -o "XiaoMi_EFI.zip" "${_downloadList[$_version]}"
     unzip -qu "XiaoMi_EFI.zip"
-    local _dirname=$(echo ${_downloadList[$_version]}|grep -o '[^/]*\.zip'|sed -e 's/\.zip//g')
+    local _dirname
+    _dirname=$(echo "${_downloadList[$_version]}"|grep -o '[^/]*\.zip'|sed -e 's/\.zip//g')
     if ! [[ -d "./${_dirname}" ]];then
         errMsg "Downloaded folder not found! Open a issue for a script update."
     fi
@@ -147,28 +185,59 @@ function backupEFI() {
     [[ -z "$EFI_DIR" ]] && mount_efi
 
     # Backuping to same partition as EFI so it's faster to recover using Linux/LiveISO
-    local _backupDir="${EFI_DIR}/$(date +%Y%m%d_%H_%M_%S)/"
-    echo -e "Backuping current efi to ${BLUE}${_backupDir}${OFF}"
-    mkdir -p "$_backupDir" || errMsg "Error creating backup folder, exiting..." && exit 1
-    cp -r "${EFI_DIR}/EFI/OC/*" "$_backupDir/" || errMsg "Error backuping EFI... aborting."&&exit 1
-    echo -e "${GREEN}Done!${OFF}"
+    local _backupDir
+    _backupDir="${EFI_DIR}/$(date +%Y%m%d_%H_%M_%S)/"
+    #echo -e "Backuping current efi to ${BLUE}${_backupDir}${OFF}"
+	#echo $_backupDir
+	#echo "${EFI_DIR}/EFI/OC/"
+	mkdir -p "$_backupDir" || (errMsg "Error creating backup folder, exiting..." && exit 1)
+	cp -r "${EFI_DIR}/EFI/OC/" "$_backupDir" || (errMsg "Error backuping EFI... aborting."&&exit 1)
+    echo -e "${CYAN}Backup done!${OFF}"
+
+}
+
+function cleanUp(){
 
 }
 
 function installEFI() {
     echo "Installing EFI..."
+    [[ -z "$EFI_DIR" ]] && mount_efi
     [[ -z "$efi_work_dir" ]] && errMsg "No work directory found. Try to download firts?"&&exit 1
+	echo
+
+	echo -e "\n${YELLOW}Do you want to install?${OFF}"
+	echo -e "${BLUE}1:${OFF} Yes, install and delete downloaded files"
+	echo -e "${BLUE}2:${OFF} No, exit the program and open the downloaded folder in Finder.(Manual install)"
+	echo -e "${BLUE}2:${OFF} No, exit the program and delete the downloaded files.(Abort Install)"
+	sleep 2
+	local _selection
+	_selection=$(readInteger "Select" 1 3)
+	
+    case $_selection in
+		1)
+			rm -r -i "${EFI_DIR}/EFI/OC/"
+			rm -r -i "${EFI_DIR}/EFI/BOOT/"
+			cp -r "$efi_work_dir/EFI/OC" "${EFI_DIR}/EFI/" || errMsg "Failed to copy during installation..."
+			cp -r "$efi_work_dir/EFI/BOOT" "${EFI_DIR}/EFI/" || errMsg "Failed to copy during installation..."
+			;;
+		2)
+			echo "${GREEN}The downloaded EFI folder is: ${CYAN}${efi_work_dir}/EFI/${OFF}"
+			open "${efi_work_dir}/EFI/"
+			;;
+		3)
+			rm -rf "${efi_work_dir}"
+			efi_work_dir=""
+			;;
+    esac
+	echo -e "${CYAN}Done!${OFF}"
     #[[ -z "$EFI_DIR" ]] && mount_efi
 
     # -i flag for safer debug
-    rm -r -i "${EFI_DIR}/EFI/OC/"
-    rm -r -i "${EFI_DIR}/EFI/BOOT/"
-    cp -r "$efi_work_dir/*" "${EFI_DIR}/EFI/"
-    echo -e "${GREEN}Done!${OFF}"
 }
 
 function searchPlistArray(){
-    # Return first index of array that match the pattern passed as $1
+    # Return index's of first array's entry that match the pattern passed as $1
     # Ouptut to stdout, you should capture it using $()
     # !!! The input is stdin and "should" be array output from PlistBuddy
     # !!! The script find the first match and calculate the index of array of most upper level that contain it
@@ -176,9 +245,13 @@ function searchPlistArray(){
     # !!! The regex match to Print of PlistBuddy, not the original file. The formats are differents.
 
 	# Fix / to \/, escape for perl.
-	local _regex=$(echo -n -E "${1}" | perl -pe 's/\//\\\//g') 
-    perl -n -e 'BEGIN{$n=0}' -e 'if(/^( *)Array \{$/){if($n==0){$a=$1}else{exit 1}}' -e 'if(/^$a    \}$/){$n++}' -e 'if(/^$a\}$/){exit 0}' -e '{if(/'"${_regex}"'/){print $n;exit 0}}' -
+	local _regex
+	_regex=$(echo -n -E "${1}" | perl -pe 's/\//\\\//g') 
+    #perl -n -e 'BEGIN{$n=0}' -e 'if(/^( *)Array \{$/){if($n==0){$a=$1}else{exit 1}}' -e 'if(/^$a    \}$/){$n++}' -e 'if(/^$a\}$/){exit 0}' -e '{if(/'"${_regex}"'/){print $n;exit 0}}' -
+	local _result
+	_result="$(perl -n -e 'BEGIN{$n=0}' -e 'if(/^( *)([^ \n][^=\n]*= )?Array \{$/){if(!defined($a)){$a=$1}}' -e 'if(defined($a)&&/^$a    \}$/){$n++}' -e 'if(/^$a\}$/){exit 0}' -e 'if(/^$a\}$/){exit 0}' -e '{if(/^$a        '"${_regex}"'/){print "$n\n"}}' -)"
 	local _r=$?
+	echo "$_result"
 	#if [[ ! $_r -eq 0 ]];then
 		#echo "${RED}L:"${BASH_LINENO[$((2))]}"${OFF}"
 	#fi
@@ -210,8 +283,44 @@ function getPlistHelper(){
         getPlistHelper "$1" "${2}${3}" "${@:4}"
     else
         # Array regex search
-        local _index=$($PLEDIT "$1" -c "Print ${2}" | searchPlistArray "${3}") || return 1
+        local _index
+        _index=$($PLEDIT "$1" -c "Print ${2}" 2>/dev/null | searchPlistArray "${3}" | head -n 1)
         getPlistHelper "$1" "${2}:${_index}" "${@:4}"
+    fi
+}
+
+function getPlistArrayIndexHelper(){
+    # Helper function for search plist array, it return all found index's
+    # $1 File path
+    # $2 Plist path or array regex, use ":" for root 
+    # $last Must be array regex search
+    # Ouptut to stdout, you should capture it using $()
+    # Plist path need to be starting with ':'
+    # Anything else is used as regex for array search
+    # see searchPlistArray() for regex pattern info
+    if [[ $# -le 1 ]];then
+        # Invalid, no pattern...
+        return 1
+    fi
+    if [[ $# -eq 2 ]];then
+		if [[ "$(echo "$2"|cut -c1)" == ":" ]];then
+			errMsg "Expected regex parameter and got $2"
+			return 1
+		fi
+        local _index
+		_index=$($PLEDIT "$1" -c "Print :" 2>/dev/null | searchPlistArray "${2}" | perl -p -e 's/\n/ /')
+		echo -n "$_index"
+        return 0
+    fi
+    if [[ "$(echo "$3"|cut -c1)" == ":" ]];then
+        # Plist Path
+        getPlistHelper "$1" "${2}${3}" "${@:4}"
+    else
+        # Array regex search
+        local _index
+		_index=$("$PLEDIT" "$1" -c "Print ${2}" 2>/dev/null | searchPlistArray "${3}" | perl -p -e 's/\n/ /')
+		echo -n "$_index"
+        #getPlistHelper "$1" "${2}:${_index}" "${@:4}"
     fi
 }
 
@@ -222,13 +331,15 @@ function deletePlistIfNotExist() {
     # $2 New EFI file
     # $3+ Plist path or array regex
     while :; do
-        local _path=$(getPlistHelper "$1" "${@:3}") || return 0
-        local _oldVarXml=$("$PLEDIT" "$1" -x -c "Print $_path") || return 0
+        local _path
+        _path=$(getPlistHelper "$1" "${@:3}") || return 0
+        local _oldVarXml
+        _oldVarXml=$("$PLEDIT" "$1" -x -c "Print $_path" 2>/dev/null) || return 0
         if [[ -z "$_oldVarXml" ]];then
             # Path missing in old config
             "$PLEDIT" "$2" -c "Delete ${_path}" || return 1
         fi
-        echo -e "${GREEN}Detected and deleted ${BLUE}${_path}${GREEN}!${OFF}"
+        echo -e "${GREEN}Deleted obsolete entry: ${BLUE}${_path}${GREEN}!${OFF}"
         return 0
     done
     errMsg "Error deleting ${*:3}!"
@@ -246,8 +357,14 @@ function getBinaryDataInBase64() {
 function getPlist() {
     # $1 PList file
     # $2+ Plist path or array regex
-    local _path=$(getPlistHelper "$1" "${@:2}") || return
-    "$PLEDIT" "$1" -c "Print $_path"
+    local _path
+    _path=$(getPlistHelper "$1" "${@:2}") || return 1
+	local _result
+	if _result="$("$PLEDIT" "$1" -c "Print $_path" 2>/dev/null)";then
+		echo -n "$_result"
+		return 0
+	fi
+	return 1
 }
 
 function restorePlist() {
@@ -257,39 +374,76 @@ function restorePlist() {
     # $3+ Plist path or array regex
 
 
+	local _errMsg="Failed to restore ${*:3}..."
+	trap 'errMsg $_errMsg on command:\n$BASH_COMMAND L:${LINENO};break' ERR
     while :; do
-        local _path=$(getPlistHelper "$1" "${@:3}") || break
-        local _newPath=$(getPlistHelper "$2" "${@:3}") || break
-        local _oldVar=$("$PLEDIT" "$1" -c "Print $_path") || break
-        local _oldVarXml=$("$PLEDIT" "$1" -x -c "Print $_path" | getBinaryDataInBase64)
-        if [[ -z "$_oldVarXml" ]];then
-            errMsg "Properties not found: $_path"
-            errMsg "Skiping!!!..."
+        local _path
+        _path=$(getPlistHelper "$1" "${@:3}")
+        local _oldVar
+        _oldVar=$("$PLEDIT" "$1" -c "Print $_path" 2>/dev/null) || :
+        local _oldVarXml
+        _oldVarXml=$("$PLEDIT" "$1" -x -c "Print $_path" 2>/dev/null | getBinaryDataInBase64) || :
+
+		local _newPath
+		_newPath=$(getPlistHelper "$2" "${@:3}")
+        local _newVar
+        _newVar=$("$PLEDIT" "$2" -c "Print $_newPath" 2>/dev/null) || :
+        local _newVarXml
+        _newVarXml=$("$PLEDIT" "$2" -x -c "Print $_newPath" 2>/dev/null | getBinaryDataInBase64) || :
+		#echo "$_oldVar|$_newVar"
+		#echo "$_oldVarXml|$_newVarXml"
+		if [[ -z "$_oldVarXml" && -z "$_oldVar" ]];then
+			# Same value or not found on old config
+            #errMsg "Skiping!!!..."
+			echo -e "${WHITE}Missing value, skipping: ${*:3}${OFF}"
+			trap - ERR
             return 0
         fi
+		if [[ "$_oldVar" == "$_newVar" && "$_oldVarXml" == "$_newVarXml" ]];then
+			# Same value or not found on old config
+			echo -e "${WHITE}Same value, skipping: ${*:3}${OFF}"
+			trap - ERR
+            return 0
+		fi
         if [[ -n "$_oldVarXml" ]];then
             # Binary data
             # Switch to plutil as PlistBuddy expect binary input that bash cannot pass as parameters
             # And plutil take base64 for data.
 
             # Change path format, plutil use '.' as separetor and eliminate the starting ':' as well
-            local _fixedNewPath=$(echo -n "$_path" | perl -pe 's/^://;' -e 's/:/\./g')
+            local _fixedNewPath
+            _fixedNewPath=$(echo -n "$_path" | perl -pe 's/^://;' -e 's/:/\./g')
 
             #plutil should be at PATH
-            "$PLUTIL" -replace "$_fixedNewPath" -data "$_oldVarXml" "$2" || break
+            "$PLUTIL" -replace "$_fixedNewPath" -data "$_oldVarXml" "$2"
+			printf "${GREEN}Restored binary data in: ${BLUE}%s${GREEN} to ${BLUE}${_oldVarXml}${GREEN} !${OFF}\n" "${*:3}"
         else
-            "$PLEDIT" "$2" -c "Set $_newPath $_oldVar" || break
-
-            # Save the change, maybe it's better to commit the change after
-            # But for better consistency with plutil we save at every change.
-            #"$PLEDIT" "$2" -c "Save" || break
+            "$PLEDIT" "$2" -c "Set $_newPath $_oldVar"
+			printf "${GREEN}Restored ${BLUE}%s${GREEN} to ${BLUE}${_oldVar}${GREEN} !${OFF}\n" "${*:3}"
 
         fi
-        echo -e "${GREEN}Restored ${BLUE}${_path}${GREEN} to ${BLUE}${_oldVar}${GREEN} !${OFF}"
+		trap - ERR
         return 0
     done
-    errMsg "Failed to restore ${*:3}..."
+	trap - ERR
     return 1
+}
+
+
+function generateArrayPatch() {
+	# $1 Plist file
+	# $2 Regex or Plist path to a Dict
+	# Please check the path exist before generating a patch....
+	# Return the path of generated patch
+	mkdir -p "./patch/"
+	local _filePath=$(mktemp "./patch/gen_XXXXXXXXXX.plist")
+	local _path
+	_path=$(getPlistHelper "$1" "${@:2}")
+	local _result
+	"$PLEDIT" "$1" -x -c "Print ${_path}" 2>/dev/null | perl -p -e 's/^<dict>$/<array>\n<dict>/;s/^<\/dict>$/<\/dict>\n<\/array>/' - > "$_filePath"
+
+	echo -n "$_filePath"
+	
 }
 
 function restoreBootArgs() {
@@ -297,32 +451,45 @@ function restoreBootArgs() {
     [[ -z "$efi_work_dir" ]] && errMsg "No work directory found. Try to download firts?"&&exit 1
     [[ -z "$EFI_DIR" ]] && mount_efi
     while :;do
-        local _old_config="${EFI_DIR}/EFI/OC/config.plist"
-        local _new_config="${efi_work_dir}/OC/config.plist"
-        local _path=$(getPlistHelper "$_old_config" ':NVRAM:Add:7C436110-AB2A-4BBB-A880-FE41995C9F82:boot-args') || break
-        local _newPath=$(getPlistHelper "$_new_config" ':NVRAM:Add:7C436110-AB2A-4BBB-A880-FE41995C9F82:boot-args') || break
-        local _oldVar=$("$PLEDIT" "$_old_config" -c "Print $_path") || break
-        local _newVar=$("$PLEDIT" "$_new_config" -c "Print $_newPath") || break
+        local _old_config
+        _old_config="${EFI_DIR}/EFI/OC/config.plist"
+        local _new_config
+        _new_config="${efi_work_dir}/OC/config.plist"
+        local _path
+        _path=$(getPlistHelper "$_old_config" ':NVRAM:Add:7C436110-AB2A-4BBB-A880-FE41995C9F82:boot-args') || break
+        local _newPath
+        _newPath=$(getPlistHelper "$_new_config" ':NVRAM:Add:7C436110-AB2A-4BBB-A880-FE41995C9F82:boot-args') || break
+        local _oldVar
+        _oldVar=$("$PLEDIT" "$_old_config" -c "Print $_path" 2>/dev/null) || break
+        local _newVar
+        _newVar=$("$PLEDIT" "$_new_config" -c "Print $_newPath" 2>/dev/null) || break
 
 
+		#tput sc
         echo -e "${BLUE}1:${OFF} Old boot args"
-        echo -e "<${_oldVar}>\n"
-        echo -e "${BLUE}2:${OFF}"
-        echo -e "<${_newVar}>\n"
-        echo -e "${BLUE}3:${OFF} Custom boot args ${RED}ADVANCED USER ONLY${OFF}\n"
-        local _selection=$(readInteger "Select a version" 1 3)
+        echo -e "<${UNDERLINE}${_oldVar}${OFF}>\n"
+		echo -e "${BLUE}2:${OFF} New boot args ${CYAN}${UNDERLINE}(Recommended)${OFF}"
+        echo -e "<${UNDERLINE}${_newVar}${OFF}>\n"
+        echo -e "${BLUE}3:${OFF} Custom boot args ${RED}${UNDERLINE}${BOLD}ADVANCED USER ONLY${OFF}\n"
+        local _selection
+        _selection=$(readInteger "Select a version" 1 3)
         # TODO Better selection menu with ability to go back
-        if [[ ${_selection} -eq 1 ]];then
-            restorePlist "${_old_config}" "${_new_config}" ":NVRAM:Add:7C436110-AB2A-4BBB-A880-FE41995C9F82:boot-args"
-        else
-            if [[ ${_selection} -eq 3 ]];then
-                echo -e "${GREEN}Input a custom boot args:"
-                local _readVar
-                read -r _readVar
-                "$PLEDIT" "${_new_config}" -c "Set $_newPath ${_readVar}" || break
-            fi
-        fi
-        return 0
+		#tput rc
+		if [[ "${_selection}" -eq 1 ]];then
+			restorePlist "${_old_config}" "${_new_config}" ":NVRAM:Add:7C436110-AB2A-4BBB-A880-FE41995C9F82:boot-args"
+		else
+			if [[ ${_selection} -eq 3 ]];then
+				echo -e "Old boot args:<${UNDERLINE}${_oldVar}${OFF}>\n"
+				echo -e "New boot args:<${UNDERLINE}${_newVar}${OFF}>\n"
+				echo -e "${GREEN}Input a custom boot args:"
+				local _readVar
+				read -r _readVar
+				#tput rc
+				echo -e "New boot args:<${UNDERLINE}${_readVar}${OFF}>\n"
+				"$PLEDIT" "${_new_config}" -c "Set $_newPath ${_readVar}" || break
+			fi
+		fi
+		return 0
     done
     errMsg "Error reading boot args... Aborting"
     exit 1
@@ -335,6 +502,7 @@ function restoreBluetooth() {
     [[ -z "$efi_work_dir" ]] && errMsg "No work directory found. Try to download firts?"&&exit 1
     [[ -z "$EFI_DIR" ]] && mount_efi
 
+	cp "${efi_work_dir}"/../Bluetooth/*.aml "${efi_work_dir}/OC/ACPI/"
     # SSDT
     restorePlist "${EFI_DIR}/EFI/OC/config.plist" "${efi_work_dir}/OC/config.plist" ":ACPI:Add" "Path = SSDT-USB.aml" ":Enabled"
     restorePlist "${EFI_DIR}/EFI/OC/config.plist" "${efi_work_dir}/OC/config.plist" ":ACPI:Add" "Path = SSDT-USB-USBBT.aml" ":Enabled"
@@ -363,7 +531,7 @@ function restoreDVMT() {
     deletePlistIfNotExist "${EFI_DIR}/EFI/OC/config.plist" "${efi_work_dir}/OC/config.plist" ':DeviceProperties:Add:PciRoot(0x0)/Pci(0x2,0x0):framebuffer-con0-flags'
     deletePlistIfNotExist "${EFI_DIR}/EFI/OC/config.plist" "${efi_work_dir}/OC/config.plist" ':DeviceProperties:Add:PciRoot(0x0)/Pci(0x2,0x0):framebuffer-con1-flags'
     deletePlistIfNotExist "${EFI_DIR}/EFI/OC/config.plist" "${efi_work_dir}/OC/config.plist" ':DeviceProperties:Add:PciRoot(0x0)/Pci(0x2,0x0):framebuffer-con2-flags'
-    echo -e "${GREEN}Done!${OFF}"
+    echo -e "${CYAN}Done!${OFF}"
 }
 
 function restore0xE2() {
@@ -373,7 +541,7 @@ function restore0xE2() {
 
     restorePlist "${EFI_DIR}/EFI/OC/config.plist" "${efi_work_dir}/OC/config.plist" ':Kernel:Quirks:AppleXcpmCfgLock'
 
-    echo -e "${GREEN}Done!${OFF}"
+    echo -e "${CYAN}Done!${OFF}"
 }
 
 function restorePlatformInfo() {
@@ -388,7 +556,7 @@ function restorePlatformInfo() {
     restorePlist "${EFI_DIR}/EFI/OC/config.plist" "${efi_work_dir}/OC/config.plist" ':PlatformInfo:Generic:SystemUUID'
     restorePlist "${EFI_DIR}/EFI/OC/config.plist" "${efi_work_dir}/OC/config.plist" ':PlatformInfo:Generic:MLB'
 
-    echo -e "${GREEN}Done!${OFF}"
+    echo -e "${CYAN}Done!${OFF}"
 }
 
 function restoreMiscPreference() {
@@ -405,10 +573,11 @@ function restoreMiscPreference() {
     # For intel wifi
     restorePlist "${EFI_DIR}/EFI/OC/config.plist" "${efi_work_dir}/OC/config.plist" ':Misc:Security:DmgLoading'
     restorePlist "${EFI_DIR}/EFI/OC/config.plist" "${efi_work_dir}/OC/config.plist" ':Misc:Security:SecureBootModel'
-    echo -e "${GREEN}Done!${OFF}"
+    echo -e "${CYAN}Done!${OFF}"
 }
 
 function restoreBrcmPatchRAM() {
+	#Untested
     echo -e "${GREEN}Restoring BrcmPatchRAM...${OFF}"
     [[ -z "$efi_work_dir" ]] && errMsg "No work directory found. Try to download firts?"&&exit 1
     [[ -z "$EFI_DIR" ]] && mount_efi
@@ -416,59 +585,90 @@ function restoreBrcmPatchRAM() {
     local _new_config="${efi_work_dir}/OC/config.plist"
 
 
-    local _flag
-    local _brcmInjector=$(getPlist "${_old_config}" ':Kernel:Add' 'BundlePath = BrcmBluetoothInjector.kext' ':Enabled')||_flag=1
-    local _brcmFirmwareData=$(getPlist "${_old_config}" ':Kernel:Add' 'BundlePath = BrcmFirmwareData.kext' ':Enabled')||_flag=1
-    local _brcmRAM3=$(getPlist "${_old_config}" ':Kernel:Add' 'BundlePath = BrcmPatchRAM3.kext' ':Enabled')||_flag=1
+    local _flag=0
+    local _brcmInjector
+	_brcmInjector=$(getPlist "${_old_config}" ':Kernel:Add' 'BundlePath = BrcmBluetoothInjector.kext' ':Enabled')&&((_var+=1))
+    local _brcmFirmwareData
+    _brcmFirmwareData=$(getPlist "${_old_config}" ':Kernel:Add' 'BundlePath = BrcmFirmwareData.kext' ':Enabled')&&((_var+=2))
+    local _brcmRAM3
+	_brcmRAM3=$(getPlist "${_old_config}" ':Kernel:Add' 'BundlePath = BrcmPatchRAM3.kext' ':Enabled')&&((_var+=4))
 
 
-    if [[ -n "$_flag" ]];then
+    if [[ "$_flag" -ne 0 ]];then
         echo -e "${GREEN}Downloading BrcmPatchRAM...${OFF}"
 
-        local _patchRAMLink=$(getGitHubLatestRelease "acidanthera/BrcmPatchRAM" 'RELEASE')
+        local _patchRAMLink
+        _patchRAMLink=$(getGitHubLatestRelease "acidanthera/BrcmPatchRAM" 'RELEASE')
 
-        curl -L -# -o "BrcmPatchRAM.zip" "${_patchRAMLink}"
+        curl -f -L -# -o "BrcmPatchRAM.zip" "${_patchRAMLink}" ||networkWarn
         ditto -x -k "./BrcmPatchRAM.zip" .
 
-        local _dirname=$(echo ${_patchRAMLink}|grep -o '[^/]*\.zip'|sed -e 's/\.zip//g')
+        #local _dirname=$(echo ${_patchRAMLink}|grep -o '[^/]*\.zip'|sed -e 's/\.zip//g')
 
-        if ! [[ -d "./${_dirname}" ]];then
-            errMsg "Downloaded folder not found! Open a issue for a script update."
+        if ! [[ -d "./BrcmBluetoothInjector.kext" && -d "./BrcmFirmwareData.kext" && -d "./BrcmPatchRAM3.kext" ]];then
+            errMsg "Download kext not found! Open a issue for a script update."
             return 1
         fi
-        local _patchRAMDir="${PWD}/${_dirname}/"
+        local _patchRAMDir="."
 
+		echo -e "${GREEN}Downloading patch from github${OFF}"
+		mkdir -p "./patch"
+		#curl -f -# -L -o "./patch/BrcmBluetoothInjector.plist" "https://raw.githubusercontent.com/daliansky/XiaoMi-Pro-Hackintosh/main/Scripts/patch/BrcmBluetoothInjector.plist" || networkWarn
+		#curl -f -# -L -o "./patch/BrcmFirmwareData.plist" "https://raw.githubusercontent.com/daliansky/XiaoMi-Pro-Hackintosh/main/Scripts/patch/BrcmFirmwareData.plist" || networkWarn
+		#curl -f -# -L -o "./patch/BrcmPatchRAM3.plist" "https://raw.githubusercontent.com/daliansky/XiaoMi-Pro-Hackintosh/main/Scripts/patch/BrcmPatchRAM3.plist" || networkWarn
+		cp /Users/mc/git/XiaoMi-Pro/Scripts/patch/* "./patch/"
+
+		echo "${GREEN}Adding BrcmPatchRAM Kext's entry to config.efi...${OFF}"
         [[ "$_brcmInjector" == "true" ]] && cp -r "${_patchRAMDir}/BrcmBluetoothInjector.kext" "${efi_work_dir}/OC/Kexts/" && ${PLEDIT} -x -c "Merge ./patch/BrcmBluetoothInjector.plist :Kernel:Add" "${_new_config}" && echo -e "${GREEN}Restored BrcmBluetoothInjector${OFF}"
         [[ "$_brcmFirmwareData" == "true" ]] && cp -r "${_patchRAMDir}/BrcmFirmwareData.kext" "${efi_work_dir}/OC/Kexts/" && ${PLEDIT} -x -c "Merge ./patch/BrcmFirmwareData.plist :Kernel:Add" "${_new_config}" && echo -e "${GREEN}Restored BrcmFirmwareData${OFF}"
         [[ "$_brcmRAM3" == "true" ]] && cp -r "${_patchRAMDir}/BrcmPatchRAM3.kext" "${efi_work_dir}/OC/Kexts/" && ${PLEDIT} -x -c "Merge ./patch/BrcmPatchRAM3.plist :Kernel:Add" "${_new_config}" && echo -e "${GREEN}Restored BrcmPatchRAM3${OFF}"
+	else
+		echo -e "${WHITE}Nothing needed! Skipping..${OFF}"
+
     fi
-	echo -e "${GREEN}Done!${OFF}"
+	echo -e "${CYAN}Done!${OFF}"
 
 
 }
 
 function restoreAirportFixup(){
-    echo -e "${GREEN}Restoring AirportFixup...${OFF}"
-    local _brcmAirport=$(getPlist "${_old_config}" ':Kernel:Add' 'BundlePath = AirportBrcmFixup.kext' ':Enabled')
+    echo -e "${GREEN}Restoring AirportBrcmFixup...${OFF}"
+    [[ -z "$efi_work_dir" ]] && errMsg "No work directory found. Try to download firts?"&&exit 1
+    [[ -z "$EFI_DIR" ]] && mount_efi
+    local _old_config="${EFI_DIR}/EFI/OC/config.plist"
+    local _new_config="${efi_work_dir}/OC/config.plist"
+	local _brcmAirport
+	_brcmAirport=$(getPlist "${_old_config}" ':Kernel:Add' 'BundlePath = AirportBrcmFixup.kext' ':Enabled')
+	#local _brcmAirport=true
     if [[ "$_brcmAirport" == "true" ]];then
         echo -e "${GREEN}Downloading BrcmPatchRAM...${OFF}"
-        local _airportBrcmLink=$(getGitHubLatestRelease "acidanthera/AirportBrcmFixup" 'RELEASE')
+        local _airportBrcmLink
+        _airportBrcmLink=$(getGitHubLatestRelease "acidanthera/AirportBrcmFixup" 'RELEASE')
 
-        curl -L -# -o "AirportBrcmFixup.zip" "${_airportBrcmLink}"
+        curl -L -f -# -o "AirportBrcmFixup.zip" "${_airportBrcmLink}" ||networkWarn
         ditto -x -k "./AirportBrcmFixup.zip" .
-        local _dirname=$(echo ${_airportBrcmLink}|grep -o '[^/]*\.zip'|sed -e 's/\.zip//g')
+        #local _dirname=$(echo "${_airportBrcmLink}"|grep -o '[^/]*\.zip'|sed -e 's/\.zip//g')
 
 
-        if ! [[ -d "./${_dirname}" ]];then
-            errMsg "Downloaded folder not found! Open a issue for a script update."
+        if ! [[ -d "./AirportBrcmFixup.kext" ]];then
+			errMsg "Download ($_dirname) not found! Open a issue for a script update."
             return 1
         fi
         local _patchRAMDir="${PWD}/${_dirname}/"
 
-        cp -r "${_airportBrcmLink}/AirportBrcmFixup.kext" "${efi_work_dir}/OC/Kexts/" && ${PLEDIT} -x -c "Merge ./patch/AirportBrcmFixup.plist :Kernel:Add" "${_new_config}" && echo -e "${GREEN}Restored AirportBrcmFixup${OFF}"
+		# Download patch
+		echo -e "${GREEN}Downloading patch from github${OFF}"
+		mkdir -p "./patch"
+		#curl -# -f -L -o "./patch/AirportBrcmFixup.plist" "https://raw.githubusercontent.com/daliansky/XiaoMi-Pro-Hackintosh/main/Scripts/patch/AirportBrcmFixup.plist" || networkWarn
+		cp /Users/mc/git/XiaoMi-Pro/Scripts/patch/* "./patch/"
 
+		echo "${GREEN}Adding AirportBrcmFixup Kext entry to config.efi...${OFF}"
+        cp -r "./AirportBrcmFixup.kext" "${efi_work_dir}/OC/Kexts/" && ${PLEDIT} -x -c "Merge ./patch/AirportBrcmFixup.plist :Kernel:Add" "${_new_config}" && echo -e "${GREEN}Restored AirportBrcmFixup${OFF}"
+
+	else
+		echo -e "${WHITE}Nothing needed! Skipping..${OFF}"
     fi
-	echo -e "${GREEN}Done!${OFF}"
+	echo -e "${CYAN}Done!${OFF}"
 
 }
 
@@ -491,31 +691,216 @@ function restoreOptionalKext() {
     restorePlist "${_old_config}" "${_new_config}" ':Kernel:Add' 'BundlePath = NullEthernet.kext' ':Enabled'
     restorePlist "${_old_config}" "${_new_config}" ':Kernel:Add' 'BundlePath = NullEthernet.kext' ':Enabled'
 
-
     restorePlist "${_old_config}" "${_new_config}" ':Kernel:Add' 'BundlePath = NVMeFix.kext' ':Enabled'
     restorePlist "${_old_config}" "${_new_config}" ':Kernel:Add' 'BundlePath = HibernationFixup.kext' ':Enabled'
-	echo -e "${GREEN}Done!${OFF}"
+	echo -e "${CYAN}Done!${OFF}"
 
 }
 
+function brightnessKeyestore(){
+    echo -e "${GREEN}Restoring Brightness key aml...${OFF}"
+    [[ -z "$efi_work_dir" ]] && errMsg "No work directory found. Try to download firts?"&&exit 1
+    [[ -z "$EFI_DIR" ]] && mount_efi
+    local _old_config="${EFI_DIR}/EFI/OC/config.plist"
+    local _new_config="${efi_work_dir}/OC/config.plist"
+	# Brightness restore
+    restorePlist "${EFI_DIR}/EFI/OC/config.plist" "${efi_work_dir}/OC/config.plist" ':Misc:Boot:PickerMode'
+	[[ -f "${efi_work_dir}/../GTX/SSDT-LGPAGTX.aml" ]] && cp "${efi_work_dir}/../GTX/SSDT-LGPAGTX.aml" "${efi_work_dir}/OC/ACPI/"
+	[[ -f "${efi_work_dir}/../MX350/SSDT-LGPA350.aml" ]] && cp "${efi_work_dir}/../GTX/SSDT-LGPA350.aml" "${efi_work_dir}/OC/ACPI/"
+    restorePlist "${_old_config}" "${_new_config}" ':ACPI:Add' 'Path = SSDT-LGPA.aml' ':Enabled'
+    restorePlist "${_old_config}" "${_new_config}" ':ACPI:Add' 'Path = SSDT-LGPAGTX.aml' ':Enabled'
+    restorePlist "${_old_config}" "${_new_config}" ':ACPI:Add' 'Path = SSDT-LGPA350.aml' ':Enabled'
+	echo -e "${CYAN}Done!${OFF}"
+}
+
+
+function restoreSSDT(){
+	# Iterate over old config and restore
+	# Should run last
+	echo -e "${GREEN}Restoring missing SSDT...${OFF}"
+	[[ -z "$efi_work_dir" ]] && errMsg "No work directory found. Try to download firts?"&&exit 1
+    [[ -z "$EFI_DIR" ]] && mount_efi
+    local _old_config="${EFI_DIR}/EFI/OC/config.plist"
+	local _new_config="${efi_work_dir}/OC/config.plist"
+
+	local _oldEnabledSSDT
+	read -r -a _oldEnabledSSDT <<< "$(getPlistArrayIndexHelper "${_old_config}" ":ACPI:Add" "Enabled = true")"
+	for i in "${_oldEnabledSSDT[@]}"; do
+		local _ssdtName
+		_ssdtName=$(getPlist "${_old_config}" ":ACPI:Add:${i}:Path")
+		local _ssdtComment
+		_ssdtComment=$(getPlist "${_old_config}" ":ACPI:Add:${i}:Comment")
+		local _newPath
+		_newPath=$(getPlistHelper "${_new_config}" ":ACPI:Add" "Path = ${_ssdtName}")
+		local _newEnabled
+		_newEnabled=$(getPlist "${_new_config}" "${_newPath}" ":Enabled")
+		if [[ "$_newEnabled" == true ]];then
+			# Same SSDT are enabled in both config, skip
+			continue
+		fi
+
+		if ! readYesNo "${YELLOW}Do you wish to restore SSDT: ${CYAN}${UNDERLINE}${_ssdtName}${OFF} ${WHITE}(${_ssdtComment})${YELLOW}?";then
+			continue
+		fi
+
+		# Restoring SSDT
+		if [[ -z "$_newEnabled" ]];then
+			# New entry
+			"$PLEDIT" "${_new_config}" -x -c "Merge $(generateArrayPatch ${_old_config} :ACPI:Add:"${i}") :ACPI:Add" 2>/dev/null || errMsg "Failed to merge SSDT." 
+			cp -n "${EFI_DIR}/EFI/OC/ACPI/${_ssdtName}" "${efi_work_dir}/OC/ACPI/"
+		else
+			# Existing entry, but need to restore enabled
+			restorePlist "${_old_config}" "${_new_config}" ':ACPI:Add' "Path = ${_ssdtName}" ':Enabled'
+			# Do not copy as the newer EFI should have a newer aml
+		fi
+		
+	done
+}
+
+function restoreKext(){
+	# Iterate over old config and restore
+	# Should run last
+	echo -e "${GREEN}Restoring missing Kext's...${OFF}"
+	[[ -z "$efi_work_dir" ]] && errMsg "No work directory found. Try to download firts?"&&exit 1
+    [[ -z "$EFI_DIR" ]] && mount_efi
+    local _old_config="${EFI_DIR}/EFI/OC/config.plist"
+	local _new_config="${efi_work_dir}/OC/config.plist"
+
+	local _oldEnabledKext
+	read -r -a _oldEnabledKext <<< "$(getPlistArrayIndexHelper "${_old_config}" ":Kernel:Add" "Enabled = true")"
+	for i in "${_oldEnabledKext[@]}"; do
+		local _kextBundle
+		_kextBundle=$(getPlist "${_old_config}" ":Kernel:Add:${i}:BundlePath")
+		local _kextComment
+		_kextComment=$(getPlist "${_old_config}" ":Kernel:Add:${i}:Comment")
+		local _newPath
+		_newPath=$(getPlistHelper "${_new_config}" ":Kernel:Add" "BundlePath = ${_kextBundle}")
+		local _newEnabled
+		_newEnabled=$(getPlist "${_new_config}" "${_newPath}" ":Enabled")
+		if [[ "$_newEnabled" == true ]];then
+			# Same Kext are enabled in both config, skip
+			continue
+		fi
+
+		if ! readYesNo "${YELLOW}Do you wish to restore Kext: ${CYAN}${UNDERLINE}${_kextBundle}${OFF} ${WHITE}(${_kextComment})${YELLOW}?";then
+			continue
+		fi
+
+		# Restoring Kext
+		if [[ -z "$_newEnabled" ]];then
+			# New entry
+			"$PLEDIT" "${_new_config}" -x -c "Merge $(generateArrayPatch ${_old_config} :Kernel:Add:"${i}") :Kernel:Add" 2>/dev/null || errMsg "Failed to merge Kext." 
+			cp -r -n "${EFI_DIR}/EFI/OC/Kexts/${_kextBundle}" "${efi_work_dir}/OC/Kexts/"
+		else
+			# Existing entry, but need to restore enabled
+			restorePlist "${_old_config}" "${_new_config}" ':Kernel:Add' "BundlePath = ${_kextBundle}" ':Enabled'
+			# Do not copy as the newer EFI should have a newer kext
+		fi
+		
+	done
+}
+
+function checkIntegrity(){
+	echo -e "${GREEN}Cheking integrity..${OFF}"
+	[[ -z "$efi_work_dir" ]] && errMsg "No work directory found. Try to download firts?"&&exit 1
+    [[ -z "$EFI_DIR" ]] && mount_efi
+    local _old_config="${EFI_DIR}/EFI/OC/config.plist"
+	local _new_config="${efi_work_dir}/OC/config.plist"
+	local _integrity=0
+
+	#Check SSDT
+	echo -e "${GREEN}Checking config.plist format..."
+	if ! "$PLUTIL" -lint "${_new_config}" >/dev/null;then
+		errMsg "The config's format is corrupted... please open an issue"
+		_integrity=1
+	fi
+
+	local _newEnabledSSDT
+	read -r -a _newEnabledSSDT <<< "$(getPlistArrayIndexHelper "${_new_config}" ":ACPI:Add" "Enabled = true")"
+	for i in "${_newEnabledSSDT[@]}"; do
+		local _ssdtName
+		_ssdtName=$(getPlist "${_new_config}" ":ACPI:Add:${i}:Path")
+		if [[ ! -f "${efi_work_dir}/OC/ACPI/${_ssdtName}" ]];then
+			local _ssdtComment
+			_ssdtComment=$(getPlist "${_old_config}" ":ACPI:Add:${i}:Comment")
+			errMsg "SSDT: ${_ssdtName} (${_ssdtComment}) exist in config.plist but not in ACPI folder!"
+			if [[ -f "${EFI_DIR}/EFI/OC/ACPI/${_ssdtName}" ]];then
+				echo -e "${GREEN}Found ${CYAN}${UNDERLINE}${_ssdtName}${OFF}${WHITE}(${_ssdtComment})${GREEN} in old EFI folder!"
+
+				if readYesNo "${YELLOW}Do you wish to copy ${CYAN}${UNDERLINE}${_ssdtName}${OFF}${YELLOW} from old EFI?" ;then
+					cp "${EFI_DIR}/EFI/OC/ACPI/${_ssdtName}" "${efi_work_dir}/OC/ACPI/"||_integrity=1
+					continue
+				fi
+
+			fi
+			# Failed to copy file or not found
+			_integrity=1
+		fi
+	done
+
+	#Check Kext
+	local _newEnabledKext
+	read -r -a _newEnabledKext <<< "$(getPlistArrayIndexHelper "${_new_config}" ":Kernel:Add" "Enabled = true")"
+	for i in "${_newEnabledKext[@]}"; do
+		local _kextBundlePath
+		_kextBundlePath=$(getPlist "${_new_config}" ":Kernel:Add:${i}:BundlePath")
+		if [[ ! -d "${efi_work_dir}/OC/Kexts/${_kextBundlePath}" ]];then
+			local _kextComment
+			_kextComment=$(getPlist "${_new_config}" ":Kernel:Add:${i}:Comment")
+			errMsg "Kext: ${_kextBundlePath} (${_kextComment}) exist in config.plist but not in Kexts folder!"
+			if [[ -d "${EFI_DIR}/EFI/OC/Kexts/${_kextBundlePath}" ]];then
+				echo -e "${GREEN}Found ${CYAN}${UNDERLINE}${_kextBundlePath}${OFF}${WHITE}(${_kextComment})${GREEN} in old EFI folder!"
+
+				if readYesNo "${YELLOW}Do you wish to copy ${CYAN}${UNDERLINE}${_kextBundlePath}${OFF}${YELLOW} from old EFI? ${BLUE}[yn]${OFF}";then
+					cp -r "${EFI_DIR}/EFI/OC/Kexts/${_kextBundlePath}" "${efi_work_dir}/OC/Kexts/"||_integrity=1
+					continue
+				fi
+
+			fi
+			# Failed to copy file or not found
+			_integrity=1
+		fi
+	done
+	return $_integrity
+}
 
 function main(){
 
+	clear
     setupEnviroment
-    downloadEFI
+	downloadEFI
     mountEFI
-    #restoreDVMT
-    #restore0xE2
-    #restoreBluetooth
-    #restoreBootArgs
-    #restoreMiscPreference
-    #restorePlatformInfo
-    restoreOptionalKext
-    restoreBrcmPatchRAM
-    restoreAirportFixup
-    backupEFI
-    #installEFI
-    unmountEFI
+
+	# Plist restore
+	restoreDVMT
+	restore0xE2
+	restoreBluetooth
+	restoreMiscPreference
+	restorePlatformInfo
+	brightnessKeyestore
+	echo
+
+	# Patch restore
+	restoreOptionalKext
+	restoreBrcmPatchRAM
+	restoreAirportFixup
+	echo
+
+	# Interactive restore
+	restoreBootArgs
+	echo
+	restoreSSDT
+	echo
+	restoreKext
+	echo
+	if checkIntegrity;then
+		#backupEFI
+		#installEFI
+	else
+		errMsg "Failed checking integrity..."
+	echo
+
+    #unmountEFI
 }
 
 main
