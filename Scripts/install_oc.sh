@@ -56,26 +56,27 @@ function mountEFI() {
 
     # check whether EFI partition exists
     if [[ -z "${EFI_DIR}" ]]; then
-        echo -e "[ ${RED}ERROR${OFF} ]: Failed to detect EFI partition"
+        echo -e "${RED}Failed to detect EFI partition${OFF}"
         unmountEFI
         exit 1
 
         # check whether EFI/OC exists
-    elif [[ ! -e "${EFI_DIR}/EFI/OC" ]]; then
-        echo -e "[ ${RED}ERROR${OFF} ]: Failed to detect OC folder"
+    elif [[ ! -f "${EFI_DIR}/EFI/OC/config.plist" ]]; then
+        echo -e "${RED}Failed to detect OC install${OFF}"
         unmountEFI
         exit 1
     fi
 
-    echo -e "[ ${GREEN}OK${OFF} ]Mounted EFI at ${EFI_DIR} (credits RehabMan)"
+    echo -e "${GREEN}Mounted EFI at ${EFI_DIR} (credits RehabMan)${OFF}"
 }
 
 # Unmount EFI for safety
 function unmountEFI() {
+	[[ -z "$EFI_DIR" ]] && return
     echo
     echo "Unmounting EFI partition..."
     diskutil unmount "$EFI_DIR" &>/dev/null
-    echo -e "[ ${GREEN}OK${OFF} ]Unmount complete"
+    echo -e "${GREEN}OK$Unmount complete${OFF}"
 
     # "Unset EFI_DIR"
     EFI_DIR=''
@@ -86,7 +87,7 @@ function setupEnviroment() {
     [[ -n "$tempFolder" ]] && return
     tempFolder=$(mktemp -d)
     #tempFolder=debug
-    echo "${BLACK}Using tmporary fodler: $tempFolder${OFF}"
+	echo "${BLACK}Using tmporary fodler: $tempFolder${OFF}"
     cd "$tempFolder" || exit 2
     if ! command -v jq &>/dev/null;then
         echo Downloading jq for json parsing
@@ -108,7 +109,6 @@ function getGitHubLatestRelease() {
 
 function readInteger() {
     local _input
-	printf '\n'
     while :; do
         read -r -p "${YELLOW}${1} ${GREEN}[$2-$3]:${OFF} "  _input
         if [[ "$_input" =~ ^[0-9]+$ ]] && [[ "$_input" -ge "$2" ]] && [[ "$_input" -le "$3" ]] ;then
@@ -122,12 +122,11 @@ function readInteger() {
 
 function readYesNo(){
 	local yn
-	echo 
 	while true; do
-		read -r -n 1 -p "$1 ${BLUE}[yn]${OFF}" yn
+		read -r -n 1 -p "${*:1} ${BLUE}[yn]${OFF}" yn
 		case $yn in
-			[Yy]* ) return 0;;
-			[Nn]* ) return 1;;
+			[Yy]* ) echo;return 0;;
+			[Nn]* ) echo;return 1;;
 			* ) echo -e -n "${HEADCLEAN}";;
 		esac
 	done
@@ -183,11 +182,18 @@ function downloadEFI() {
 
 function backupEFI() {
     [[ -z "$EFI_DIR" ]] && mount_efi
+	local _lastBackup
+	_lastBackup=$(find "${EFI_DIR}" -type d -maxdepth 1 -exec basename {} \; | sort -t _ -r -k1.1,1.4n -k1.5,1.6n -k1.7,1.8 -k2nr -k3nr -k4nr | grep -E '[0-9]{8}_[0-9]{2}_[0-9]{2}_[0-9]{2}' | head -n1)
+
+	if [[ -n "$_lastBackup" ]] && diff -rbN "${EFI_DIR}/EFI/OC/" "${EFI_DIR}/${_lastBackup}/OC/" >/dev/null;then
+		echo -e "${BOLD}${UNDERLINE}${GREEN}Found already ${YELLOW}existing${GREEN} backup: ${BLUE}${EFI_DIR}/${_lastBackup}${OFF}"
+		return
+	fi
 
     # Backuping to same partition as EFI so it's faster to recover using Linux/LiveISO
     local _backupDir
     _backupDir="${EFI_DIR}/$(date +%Y%m%d_%H_%M_%S)/"
-    #echo -e "Backuping current efi to ${BLUE}${_backupDir}${OFF}"
+	echo -e "${BOLD}${UNDERLINE}Backuping current efi to ${BLUE}${_backupDir}${OFF}"
 	#echo $_backupDir
 	#echo "${EFI_DIR}/EFI/OC/"
 	mkdir -p "$_backupDir" || (errMsg "Error creating backup folder, exiting..." && exit 1)
@@ -197,7 +203,20 @@ function backupEFI() {
 }
 
 function cleanUp(){
-
+    if [[ -n "$tempFolder" ]];then
+		echo
+		if readYesNo "${YELLOW}Do you wish to clean up temporary folder: ${UNDERLINE}${tempFolder}${OFF}${YELLOW} immediately?${OFF}";then
+			rm -r -f "$tempFolder"
+			efi_work_dir=""
+		else
+			echo -e "${GREEN}MacOs ${BOLD}should${OFF}${GREEN} delete the temporary folder automatically after a while, so it should be fine to ignore."
+		fi
+	fi
+	if [[ -n "$EFI_DIR" ]];then
+		unmountEFI
+	fi
+		trap - EXIT
+		exit 0
 }
 
 function installEFI() {
@@ -209,25 +228,33 @@ function installEFI() {
 	echo -e "\n${YELLOW}Do you want to install?${OFF}"
 	echo -e "${BLUE}1:${OFF} Yes, install and delete downloaded files"
 	echo -e "${BLUE}2:${OFF} No, exit the program and open the downloaded folder in Finder.(Manual install)"
-	echo -e "${BLUE}2:${OFF} No, exit the program and delete the downloaded files.(Abort Install)"
-	sleep 2
+	echo -e "${BLUE}3:${OFF} No, exit the program and delete the downloaded files.(Abort Install)"
 	local _selection
 	_selection=$(readInteger "Select" 1 3)
 	
     case $_selection in
-		1)
+		[1])
 			rm -r -i "${EFI_DIR}/EFI/OC/"
 			rm -r -i "${EFI_DIR}/EFI/BOOT/"
-			cp -r "$efi_work_dir/EFI/OC" "${EFI_DIR}/EFI/" || errMsg "Failed to copy during installation..."
-			cp -r "$efi_work_dir/EFI/BOOT" "${EFI_DIR}/EFI/" || errMsg "Failed to copy during installation..."
+			cp -r "${efi_work_dir}/OC" "${EFI_DIR}/EFI/" || errMsg "Failed to copy during installation..."
+			cp -r "${efi_work_dir}/BOOT" "${EFI_DIR}/EFI/" || errMsg "Failed to copy during installation..."
+			unmountEFI
 			;;
-		2)
-			echo "${GREEN}The downloaded EFI folder is: ${CYAN}${efi_work_dir}/EFI/${OFF}"
-			open "${efi_work_dir}/EFI/"
+		[2])
+			open "${efi_work_dir}"
+			echo "${GREEN}The downloaded EFI folder is: ${CYAN}${efi_work_dir}${OFF}"
+			echo "${GREEN}The EFI is mounted at: ${CYAN}${EFI_DIR}${OFF}"
+			echo "${GREEN}Check your Finder!${OFF}"
+			sleep 10
+
 			;;
-		3)
+		[3])
 			rm -rf "${efi_work_dir}"
 			efi_work_dir=""
+			unmountEFI
+			;;
+		*)
+			echo -n "$_selection"
 			;;
     esac
 	echo -e "${CYAN}Done!${OFF}"
@@ -613,10 +640,9 @@ function restoreBrcmPatchRAM() {
 
 		echo -e "${GREEN}Downloading patch from github${OFF}"
 		mkdir -p "./patch"
-		#curl -f -# -L -o "./patch/BrcmBluetoothInjector.plist" "https://raw.githubusercontent.com/daliansky/XiaoMi-Pro-Hackintosh/main/Scripts/patch/BrcmBluetoothInjector.plist" || networkWarn
-		#curl -f -# -L -o "./patch/BrcmFirmwareData.plist" "https://raw.githubusercontent.com/daliansky/XiaoMi-Pro-Hackintosh/main/Scripts/patch/BrcmFirmwareData.plist" || networkWarn
-		#curl -f -# -L -o "./patch/BrcmPatchRAM3.plist" "https://raw.githubusercontent.com/daliansky/XiaoMi-Pro-Hackintosh/main/Scripts/patch/BrcmPatchRAM3.plist" || networkWarn
-		cp /Users/mc/git/XiaoMi-Pro/Scripts/patch/* "./patch/"
+		curl -f -# -L -o "./patch/BrcmBluetoothInjector.plist" "https://raw.githubusercontent.com/daliansky/XiaoMi-Pro-Hackintosh/main/Scripts/patch/BrcmBluetoothInjector.plist" || networkWarn
+		curl -f -# -L -o "./patch/BrcmFirmwareData.plist" "https://raw.githubusercontent.com/daliansky/XiaoMi-Pro-Hackintosh/main/Scripts/patch/BrcmFirmwareData.plist" || networkWarn
+		curl -f -# -L -o "./patch/BrcmPatchRAM3.plist" "https://raw.githubusercontent.com/daliansky/XiaoMi-Pro-Hackintosh/main/Scripts/patch/BrcmPatchRAM3.plist" || networkWarn
 
 		echo "${GREEN}Adding BrcmPatchRAM Kext's entry to config.efi...${OFF}"
         [[ "$_brcmInjector" == "true" ]] && cp -r "${_patchRAMDir}/BrcmBluetoothInjector.kext" "${efi_work_dir}/OC/Kexts/" && ${PLEDIT} -x -c "Merge ./patch/BrcmBluetoothInjector.plist :Kernel:Add" "${_new_config}" && echo -e "${GREEN}Restored BrcmBluetoothInjector${OFF}"
@@ -659,8 +685,7 @@ function restoreAirportFixup(){
 		# Download patch
 		echo -e "${GREEN}Downloading patch from github${OFF}"
 		mkdir -p "./patch"
-		#curl -# -f -L -o "./patch/AirportBrcmFixup.plist" "https://raw.githubusercontent.com/daliansky/XiaoMi-Pro-Hackintosh/main/Scripts/patch/AirportBrcmFixup.plist" || networkWarn
-		cp /Users/mc/git/XiaoMi-Pro/Scripts/patch/* "./patch/"
+		curl -# -f -L -o "./patch/AirportBrcmFixup.plist" "https://raw.githubusercontent.com/daliansky/XiaoMi-Pro-Hackintosh/main/Scripts/patch/AirportBrcmFixup.plist" || networkWarn
 
 		echo "${GREEN}Adding AirportBrcmFixup Kext entry to config.efi...${OFF}"
         cp -r "./AirportBrcmFixup.kext" "${efi_work_dir}/OC/Kexts/" && ${PLEDIT} -x -c "Merge ./patch/AirportBrcmFixup.plist :Kernel:Add" "${_new_config}" && echo -e "${GREEN}Restored AirportBrcmFixup${OFF}"
@@ -813,6 +838,8 @@ function checkIntegrity(){
 	if ! "$PLUTIL" -lint "${_new_config}" >/dev/null;then
 		errMsg "The config's format is corrupted... please open an issue"
 		_integrity=1
+	else
+		echo "${GREEN}OK...${OFF}"
 	fi
 
 	local _newEnabledSSDT
@@ -823,17 +850,18 @@ function checkIntegrity(){
 		if [[ ! -f "${efi_work_dir}/OC/ACPI/${_ssdtName}" ]];then
 			local _ssdtComment
 			_ssdtComment=$(getPlist "${_old_config}" ":ACPI:Add:${i}:Comment")
-			errMsg "SSDT: ${_ssdtName} (${_ssdtComment}) exist in config.plist but not in ACPI folder!"
 			if [[ -f "${EFI_DIR}/EFI/OC/ACPI/${_ssdtName}" ]];then
-				echo -e "${GREEN}Found ${CYAN}${UNDERLINE}${_ssdtName}${OFF}${WHITE}(${_ssdtComment})${GREEN} in old EFI folder!"
+				echo 
+				echo -e "${CYAN}${UNDERLINE}${_ssdtName}${OFF}${WHITE}(${_ssdtComment})${GREEN} is ${RED}${BOLD}missing${OFF}${GREEN} in the ${UNDERLINE}NEW EFI${OFF}${GREEN}, but it exist in the old EFI folder!"
 
-				if readYesNo "${YELLOW}Do you wish to copy ${CYAN}${UNDERLINE}${_ssdtName}${OFF}${YELLOW} from old EFI?" ;then
+				if readYesNo "${YELLOW}Do you wish to copy ${CYAN}${UNDERLINE}${_ssdtName}${OFF}${YELLOW} from old EFI?${OFF}" ;then
 					cp "${EFI_DIR}/EFI/OC/ACPI/${_ssdtName}" "${efi_work_dir}/OC/ACPI/"||_integrity=1
 					continue
 				fi
 
 			fi
 			# Failed to copy file or not found
+			errMsg "SSDT: ${_ssdtName} (${_ssdtComment}) exist in config.plist but not in ACPI folder!"
 			_integrity=1
 		fi
 	done
@@ -847,17 +875,18 @@ function checkIntegrity(){
 		if [[ ! -d "${efi_work_dir}/OC/Kexts/${_kextBundlePath}" ]];then
 			local _kextComment
 			_kextComment=$(getPlist "${_new_config}" ":Kernel:Add:${i}:Comment")
-			errMsg "Kext: ${_kextBundlePath} (${_kextComment}) exist in config.plist but not in Kexts folder!"
 			if [[ -d "${EFI_DIR}/EFI/OC/Kexts/${_kextBundlePath}" ]];then
-				echo -e "${GREEN}Found ${CYAN}${UNDERLINE}${_kextBundlePath}${OFF}${WHITE}(${_kextComment})${GREEN} in old EFI folder!"
+				echo 
+				echo -e "${CYAN}${UNDERLINE}${_kextBundlePath}${OFF}${WHITE}(${_kextComment})${GREEN} is ${RED}${BOLD}missing${OFF}${GREEN} in the ${UNDERLINE}NEW EFI${OFF}${GREEN}, but it exist in the old EFI folder!"
 
-				if readYesNo "${YELLOW}Do you wish to copy ${CYAN}${UNDERLINE}${_kextBundlePath}${OFF}${YELLOW} from old EFI? ${BLUE}[yn]${OFF}";then
+				if readYesNo "${YELLOW}Do you wish to copy ${CYAN}${UNDERLINE}${_kextBundlePath}${OFF}${YELLOW} from old EFI?${OFF}";then
 					cp -r "${EFI_DIR}/EFI/OC/Kexts/${_kextBundlePath}" "${efi_work_dir}/OC/Kexts/"||_integrity=1
 					continue
 				fi
 
 			fi
 			# Failed to copy file or not found
+			errMsg "Kext: ${_kextBundlePath} (${_kextComment}) exist in config.plist but not in Kexts folder!"
 			_integrity=1
 		fi
 	done
@@ -868,6 +897,9 @@ function main(){
 
 	clear
     setupEnviroment
+	stty -echoctl # No ^C when Ctrl-C is pressed
+	trap 'cleanUp' SIGINT
+	trap 'cleanUp' EXIT
 	downloadEFI
     mountEFI
 
@@ -882,8 +914,10 @@ function main(){
 
 	# Patch restore
 	restoreOptionalKext
-	restoreBrcmPatchRAM
-	restoreAirportFixup
+
+	# Disabled due to patch not uploaded to main repo
+	#restoreBrcmPatchRAM
+	#restoreAirportFixup
 	echo
 
 	# Interactive restore
@@ -894,23 +928,15 @@ function main(){
 	restoreKext
 	echo
 	if checkIntegrity;then
-		#backupEFI
-		#installEFI
+		echo ""
+		backupEFI
+		installEFI
 	else
-		errMsg "Failed checking integrity..."
+		errMsg "Failed checking integrity... Existing..."
+		unmountEFI
+	fi
 	echo
 
-    #unmountEFI
 }
 
 main
-#installEFI
-#downloadEFI
-
-#getPlistHelper 'config.plist' ":ACPI" ":Add" 'Path = SSDT-USB-USBBT.aml' ':Path'
-
-#$PLEDIT "config.plist" -c "Print :ACPI:Add" | searchPlistArray 'Path = SSDT-USB-USBBT.aml'
-#echo $?
-#echo $tempFolder
-#rm -r "$tempFolder"
-
