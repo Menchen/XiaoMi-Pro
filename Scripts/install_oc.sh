@@ -183,16 +183,16 @@ function downloadEFI() {
 function backupEFI() {
     [[ -z "$EFI_DIR" ]] && mount_efi
 	local _lastBackup
-	_lastBackup=$(find "${EFI_DIR}" -type d -maxdepth 1 -exec basename {} \; | sort -t _ -r -k1.1,1.4n -k1.5,1.6n -k1.7,1.8 -k2nr -k3nr -k4nr | grep -E '[0-9]{8}_[0-9]{2}_[0-9]{2}_[0-9]{2}' | head -n1)
+	_lastBackup=$(find "${EFI_DIR}/Backups" -type d -maxdepth 1 -exec basename {} \; | sort -t _ -r -k1.1,1.4n -k1.5,1.6n -k1.7,1.8 -k2nr -k3nr -k4nr | grep -E '[0-9]{8}_[0-9]{2}_[0-9]{2}_[0-9]{2}' | head -n1)
 
-	if [[ -n "$_lastBackup" ]] && diff -rbN "${EFI_DIR}/EFI/OC/" "${EFI_DIR}/${_lastBackup}/OC/" >/dev/null;then
-		echo -e "${BOLD}${UNDERLINE}${GREEN}Found already ${YELLOW}existing${GREEN} backup: ${BLUE}${EFI_DIR}/${_lastBackup}${OFF}"
+	if [[ -n "$_lastBackup" ]] && diff -rbN "${EFI_DIR}/EFI/OC/" "${EFI_DIR}/Backups/${_lastBackup}/OC/" >/dev/null;then
+		echo -e "${BOLD}${UNDERLINE}${GREEN}Found already ${YELLOW}existing${GREEN} backup: ${BLUE}${EFI_DIR}/Backups/${_lastBackup}${OFF}"
 		return
 	fi
 
     # Backuping to same partition as EFI so it's faster to recover using Linux/LiveISO
     local _backupDir
-    _backupDir="${EFI_DIR}/$(date +%Y%m%d_%H_%M_%S)/"
+    _backupDir="${EFI_DIR}/Backups/$(date +%Y%m%d_%H_%M_%S)/"
 	echo -e "${BOLD}${UNDERLINE}Backuping current efi to ${BLUE}${_backupDir}${OFF}"
 	#echo $_backupDir
 	#echo "${EFI_DIR}/EFI/OC/"
