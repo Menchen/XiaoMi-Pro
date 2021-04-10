@@ -249,8 +249,8 @@ function installEFI() {
 
 			;;
 		[3])
-			rm -rf "${efi_work_dir}"
-			efi_work_dir=""
+			rm -rf "${tempFolder}"
+			tempFolder=""
 			unmountEFI
 			;;
 		*)
