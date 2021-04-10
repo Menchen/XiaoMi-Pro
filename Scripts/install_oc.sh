@@ -897,7 +897,7 @@ function main(){
 
 	clear
     setupEnviroment
-	#stty -echoctl # No ^C when Ctrl-C is pressed
+	stty -echoctl # No ^C when Ctrl-C is pressed
 	trap 'cleanUp' SIGINT
 	trap 'cleanUp' EXIT
 	downloadEFI
