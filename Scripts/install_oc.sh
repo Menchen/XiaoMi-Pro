@@ -76,7 +76,7 @@ function unmountEFI() {
     echo
     echo "Unmounting EFI partition..."
     diskutil unmount "$EFI_DIR" &>/dev/null
-    echo -e "${GREEN}OK$Unmount complete${OFF}"
+    echo -e "${GREEN}OK Unmount complete${OFF}"
 
     # "Unset EFI_DIR"
     EFI_DIR=''
@@ -463,7 +463,8 @@ function generateArrayPatch() {
 	# Please check the path exist before generating a patch....
 	# Return the path of generated patch
 	mkdir -p "./patch/"
-	local _filePath=$(mktemp "./patch/gen_XXXXXXXXXX.plist")
+	local _filePath
+	_filePath=$(mktemp "./patch/gen_XXXXXXXXXX.plist")
 	local _path
 	_path=$(getPlistHelper "$1" "${@:2}")
 	local _result
