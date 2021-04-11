@@ -103,7 +103,7 @@ function getGitHubLatestRelease() {
     #$2 Download filter as regex
     local _jsonData
     _jsonData=$(curl -f --silent 'https://api.github.com/repos/'"${1}"'/releases/latest') || networkWarn
-    # Parse JSON to OC only
+    # Parse JSON to filter
     echo -n -E "$_jsonData" | $jq '.assets | map(select(.name|test("'"${2}"'"))) | .[].browser_download_url' | tr -d '"'
 }
 
@@ -735,9 +735,14 @@ function restoreOptionalKext() {
     local _old_config="${EFI_DIR}/EFI/OC/config.plist"
     local _new_config="${efi_work_dir}/OC/config.plist"
 
+	# Optional Kext that need to be disabled if not exist in old EFI.
+
     # Intel Wifi Force load kext
     restorePlist "${_old_config}" "${_new_config}" ':Kernel:Force' 'BundlePath = System/Library/Extensions/corecapture.kext' ':Enabled'
+    deletePlistIfNotExist "${_old_config}" "${_new_config}" ':Kernel:Force' 'BundlePath = System/Library/Extensions/corecapture.kext' ':Enabled'
+
     restorePlist "${_old_config}" "${_new_config}" ':Kernel:Force' 'BundlePath = System/Library/Extensions/IO80211Family.kext' ':Enabled'
+    deletePlistIfNotExist "${_old_config}" "${_new_config}" ':Kernel:Force' 'BundlePath = System/Library/Extensions/IO80211Family.kext' ':Enabled'
 
     # Detele those entry if not exist in old EFI
     restorePlist "${_old_config}" "${_new_config}" ':Kernel:Add' 'BundlePath = AirportItlwm_Big_Sur.kext' ':Enabled'
@@ -751,7 +756,6 @@ function restoreOptionalKext() {
 
     restorePlist "${_old_config}" "${_new_config}" ':Kernel:Add' 'BundlePath = AirportItlwm_Mojave.kext' ':Enabled'
     deletePlistIfNotExist "${_old_config}" "${_new_config}" ':Kernel:Add' 'BundlePath = AirportItlwm_Mojave.kext'
-
 
     restorePlist "${_old_config}" "${_new_config}" ':Kernel:Add' 'BundlePath = NullEthernet.kext' ':Enabled'
     deletePlistIfNotExist "${_old_config}" "${_new_config}" ':Kernel:Add' 'BundlePath = NullEthernet.kext'
@@ -947,6 +951,7 @@ function main(){
     trap 'cleanUp' EXIT
     downloadEFI
     mountEFI
+	backupEFI
 
     # Plist restore
     restoreDVMT
@@ -974,7 +979,6 @@ function main(){
     echo
     if checkIntegrity;then
         echo ""
-        backupEFI
         installEFI
     else
         errMsg "Failed checking integrity... Existing..."
