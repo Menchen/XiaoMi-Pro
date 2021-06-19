@@ -198,7 +198,7 @@ function backupEFI() {
         echo -e "${YELLOW}More than ${UNDERLINE}${BOLD}${_spaceUsed}%${OFF}${YELLOW} of EFi partition space is used"
     fi
     fi
-    if [[ -n "$_lastBackup" ]] && diff -r -x '\._*' "${EFI_DIR}/EFI/OC/" "${EFI_DIR}/Backups/${_lastBackup}/OC/" >/dev/null;then
+    if [[ -n "$_lastBackup" ]] && diff -r -x '\._*' -x '\.DS_Store' "${EFI_DIR}/EFI/OC/" "${EFI_DIR}/Backups/${_lastBackup}/OC/" >/dev/null;then
         echo -e "${BOLD}${UNDERLINE}${GREEN}Found already ${YELLOW}existing${GREEN} backup: ${BLUE}${EFI_DIR}/Backups/${_lastBackup}${OFF}"
         return
     fi
@@ -256,8 +256,8 @@ function installEFI() {
 
     case $_selection in
         [1])
-            rm -r -i "${EFI_DIR}/EFI/OC/"
-            rm -r -i "${EFI_DIR}/EFI/BOOT/"
+            rm -rf "${EFI_DIR}/EFI/OC/"
+            rm -rf "${EFI_DIR}/EFI/BOOT/"
             cp -r "${efi_work_dir}/OC" "${EFI_DIR}/EFI/" || errMsg "Failed to copy during installation..."
             cp -r "${efi_work_dir}/BOOT" "${EFI_DIR}/EFI/" || errMsg "Failed to copy during installation..."
             unmountEFI
@@ -1028,8 +1028,8 @@ function main(){
     restoreOptionalKext
 
     # Disabled due to patch not uploaded to main repo
-    #restoreBrcmPatchRAM
-    #restoreAirportFixup
+    restoreBrcmPatchRAM
+    restoreAirportFixup
     echo
 
     # Interactive restore
