@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 PLEDIT='/usr/libexec/PlistBuddy'
 
@@ -166,7 +166,7 @@ function downloadEFI() {
         done
         _version=$(readInteger "Select a version" 0 $((_downloadListLen - 1)))
         #echo $_version
-    fi
+        fi
 
     # Download and extract
     echo -e "${GREEN}Downloading EFI from Github...${OFF}:"
@@ -185,7 +185,12 @@ function backupEFI() {
     local _lastBackup
     _lastBackup=$(find "${EFI_DIR}/Backups" -type d -maxdepth 1 -exec basename {} \; 2>/dev/null | sort -t _ -r -k1.1,1.4n -k1.5,1.6n -k1.7,1.8 -k2nr -k3nr -k4nr | grep -E '[0-9]{8}_[0-9]{2}_[0-9]{2}_[0-9]{2}' | head -n1)
 
-    if [[ -n "$_lastBackup" ]] && diff -rbN "${EFI_DIR}/EFI/OC/" "${EFI_DIR}/Backups/${_lastBackup}/OC/" >/dev/null;then
+    local _escaped_EFI_DIR
+    _escaped_EFI_DIR=$(echo -n -E "${EFI_DIR}" | perl -pe 's/\//\\\//g')
+
+    local _spaceUsed
+    _spaceUsed=$(df | awk '/'"${_escaped_EFI_DIR}"'/ {print $5}'| perl -ne '/([0-9]+)/ and print $1')
+    if [[ -n "$_lastBackup" ]] && diff -r -x '\._*' "${EFI_DIR}/EFI/OC/" "${EFI_DIR}/Backups/${_lastBackup}/OC/" >/dev/null;then
         echo -e "${BOLD}${UNDERLINE}${GREEN}Found already ${YELLOW}existing${GREEN} backup: ${BLUE}${EFI_DIR}/Backups/${_lastBackup}${OFF}"
         return
     fi
@@ -196,8 +201,18 @@ function backupEFI() {
     echo -e "${BOLD}${UNDERLINE}Backuping current efi to ${BLUE}${_backupDir}${OFF}"
     #echo $_backupDir
     #echo "${EFI_DIR}/EFI/OC/"
-    mkdir -p "$_backupDir" || (errMsg "Error creating backup folder, exiting..." && exit 1)
-    cp -r "${EFI_DIR}/EFI/OC/" "$_backupDir" || (errMsg "Error backuping EFI... aborting."&&exit 1)
+    if ! mkdir -p "$_backupDir";then
+        errMsg "Error ocurred when creating backup folder, exiting..."
+        exit 1
+    fi
+
+    if ! cp -r "${EFI_DIR}/EFI/OC/" "$_backupDir";then
+        errMsg "Error ocurred when backuping EFI, aborting."
+        errMsg "Maybe not enough free disk space left? $(df | awk '/'"${_escaped_EFI_DIR}"'/ {print $5}') space used"
+        rmdir "$_backupDir"
+        exit 1
+    fi
+
     echo -e "${CYAN}Backup done!${OFF}"
 
 }
@@ -209,7 +224,7 @@ function cleanUp(){
             rm -r -f "$tempFolder"
             efi_work_dir=""
         else
-            echo -e "${GREEN}MacOs ${BOLD}should${OFF}${GREEN} delete the temporary folder automatically after a while, so it should be fine to ignore."
+            echo -e "${GREEN}MacOs ${BOLD}should${OFF}${GREEN} delete the temporary folder automatically after a while, so it should be fine to ignore it."
         fi
     fi
     if [[ -n "$EFI_DIR" ]];then
@@ -318,8 +333,8 @@ function getPlistHelper(){
         #[[ -z "$_index" ]] && _flag=1 # Abort if the entry is missing
         getPlistHelper "$1" "${2}:${_index}" "${@:4}"
         #return $_flag
-    fi
-}
+        fi
+    }
 
 function getPlistArrayIndexHelper(){
     # Helper function for search plist array, it return all found index's
@@ -413,43 +428,43 @@ function restorePlist() {
 
 
     local _errMsg="Failed to restore ${*:3}..."
-    trap 'errMsg $_errMsg on command:\n$BASH_COMMAND L:${LINENO};break' ERR
+    # trap 'errMsg $_errMsg on command:\n$BASH_COMMAND L:${LINENO};break' ERR
     while :; do
         # Use || : to skip ERR trap
         local _path
         if ! _path=$(getPlistHelper "$1" "${@:3}");then
-            trap - ERR
+            # trap - ERR
             echo -e "${WHITE}Missing value, skipping: ${*:3}${OFF}"
             return 0
         fi
         local _oldVar
-        _oldVar=$("$PLEDIT" "$1" -c "Print $_path" 2>/dev/null) || :
+        _oldVar=$("$PLEDIT" "$1" -c "Print $_path" 2>/dev/null | tr -d '\0')
         local _oldVarXml
-        _oldVarXml=$("$PLEDIT" "$1" -x -c "Print $_path" 2>/dev/null | getBinaryDataInBase64) || :
+        _oldVarXml=$("$PLEDIT" "$1" -x -c "Print $_path" 2>/dev/null | getBinaryDataInBase64)
 
         local _newPath
         if ! _newPath=$(getPlistHelper "$2" "${@:3}");then
-            trap - ERR
+            # trap - ERR
             echo -e "${WHITE}Missing value, skipping: ${*:3}${OFF}"
             return 0
         fi
         local _newVar
-        _newVar=$("$PLEDIT" "$2" -c "Print $_newPath" 2>/dev/null) || :
+        _newVar=$("$PLEDIT" "$2" -c "Print $_newPath" 2>/dev/null | tr -d '\0')
         local _newVarXml
-        _newVarXml=$("$PLEDIT" "$2" -x -c "Print $_newPath" 2>/dev/null | getBinaryDataInBase64) || :
+        _newVarXml=$("$PLEDIT" "$2" -x -c "Print $_newPath" 2>/dev/null | getBinaryDataInBase64)
         #echo "$_oldVar|$_newVar"
         #echo "$_oldVarXml|$_newVarXml"
         if [[ -z "$_oldVarXml" && -z "$_oldVar" ]];then
             # Same value or not found on old config
             #errMsg "Skiping!!!..."
             echo -e "${WHITE}Missing value, skipping: ${*:3}${OFF}"
-            trap - ERR
+            # trap - ERR
             return 0
         fi
         if [[ "$_oldVar" == "$_newVar" && "$_oldVarXml" == "$_newVarXml" ]];then
             # Same value or not found on old config
             echo -e "${WHITE}Same value, skipping: ${*:3}${OFF}"
-            trap - ERR
+            # trap - ERR
             return 0
         fi
         if [[ -n "$_oldVarXml" ]];then
@@ -469,10 +484,9 @@ function restorePlist() {
             printf "${GREEN}Restored ${BLUE}%s${GREEN} to ${BLUE}${_oldVar}${GREEN} !${OFF}\n" "${*:3}"
 
         fi
-        trap - ERR
         return 0
     done
-    trap - ERR
+    errMsg "Failed to restore a plist entry"
     return 1
 }
 
@@ -544,6 +558,47 @@ function restoreBootArgs() {
 }
 
 
+function restoreSIP() {
+    echo -e "${GREEN}Restoring SIP...${OFF}"
+    [[ -z "$efi_work_dir" ]] && errMsg "No work directory found. Try to download firts?"&&exit 1
+    [[ -z "$EFI_DIR" ]] && mount_efi
+    while :;do
+        local _old_config
+        _old_config="${EFI_DIR}/EFI/OC/config.plist"
+        local _new_config
+        _new_config="${efi_work_dir}/OC/config.plist"
+        local _path
+        _path=$(getPlistHelper "$_old_config" ':NVRAM:Add:7C436110-AB2A-4BBB-A880-FE41995C9F82:csr-active-config') || break
+        local _newPath
+        _newPath=$(getPlistHelper "$_new_config" ':NVRAM:Add:7C436110-AB2A-4BBB-A880-FE41995C9F82:csr-active-config') || break
+        local _oldVarXml
+        _oldVarXml=$("$PLEDIT" "$_old_config" -x -c "Print $_path" 2>/dev/null | getBinaryDataInBase64)
+        local _newVarXml
+        _newVarXml=$("$PLEDIT" "$_new_config" -x -c "Print $_newPath" 2>/dev/null | getBinaryDataInBase64)
+
+        if [[ "$_oldVarXml" == "$_newVarXml" ]];then
+            echo -e "${CYAN}Done!${OFF}\n"
+        fi
+
+        #tput sc
+        echo -e "${BLUE}1:${OFF} Old SIP value"
+        echo -e "<${UNDERLINE}${_oldVarXml}${OFF}>\n"
+        echo -e "${BLUE}2:${OFF} New SIP value ${CYAN}${UNDERLINE}(Recommended)${OFF}"
+        echo -e "<${UNDERLINE}${_newVarXml}${OFF}>\n"
+        # No custom value because the user would need to type in base 64... 
+        # echo -e "${BLUE}3:${OFF} Custom SIP value ${RED}${UNDERLINE}${BOLD}ADVANCED USER ONLY${OFF}\n"
+        local _selection
+        _selection=$(readInteger "Select a SIP version" 1 2)
+        # TODO Better selection menu with ability to go back
+        #tput rc
+        if [[ "${_selection}" -eq 1 ]];then
+            restorePlist "${_old_config}" "${_new_config}" ":NVRAM:Add:7C436110-AB2A-4BBB-A880-FE41995C9F82:csr-active-config"
+        fi
+        return 0
+    done
+    errMsg "Error reading SIP value(csr-active-config)... Aborting"
+    exit 1
+}
 
 function restoreBluetooth() {
     echo -e "${GREEN}Restoring Bluetooth...${OFF}"
@@ -735,7 +790,7 @@ function restoreOptionalKext() {
     local _old_config="${EFI_DIR}/EFI/OC/config.plist"
     local _new_config="${efi_work_dir}/OC/config.plist"
 
-	# Optional Kext that need to be disabled if not exist in old EFI.
+    # Optional Kext that need to be disabled if not exist in old EFI.
 
     # Intel Wifi Force load kext
     restorePlist "${_old_config}" "${_new_config}" ':Kernel:Force' 'BundlePath = System/Library/Extensions/corecapture.kext' ':Enabled'
@@ -951,7 +1006,7 @@ function main(){
     trap 'cleanUp' EXIT
     downloadEFI
     mountEFI
-	backupEFI
+    backupEFI
 
     # Plist restore
     restoreDVMT
@@ -972,6 +1027,8 @@ function main(){
 
     # Interactive restore
     restoreBootArgs
+    echo
+    restoreSIP
     echo
     restoreSSDT
     echo
