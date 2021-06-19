@@ -133,6 +133,7 @@ function readYesNo(){
 }
 
 function downloadEFI() {
+    trap 'errMsg $_errMsg on command:\n$BASH_COMMAND L:${LINENO};break' ERR
     local _downloadList
     read -r -a _downloadList <<< "$(getGitHubLatestRelease "daliansky/XiaoMi-Pro-Hackintosh" '-OC-' | perl -pe 's/\n/ /')"
 
@@ -173,23 +174,30 @@ function downloadEFI() {
     curl -f -L -# -o "XiaoMi_EFI.zip" "${_downloadList[$_version]}" || networkWarn
     unzip -qu "XiaoMi_EFI.zip"
     local _dirname
-    _dirname=$(echo "${_downloadList[$_version]}"|grep -o '[^/]*\.zip'|sed -e 's/\.zip//g')
+    _dirname=$(echo "${_downloadList[$_version]}"|  xargs -I {} basename {} .zip)
     if ! [[ -d "./${_dirname}" ]];then
         errMsg "Downloaded folder not found! Open a issue for a script update."
     fi
     efi_work_dir="${PWD}/${_dirname}/EFI"
+    trap - ERR
 }
 
 function backupEFI() {
     [[ -z "$EFI_DIR" ]] && mount_efi
     local _lastBackup
-    _lastBackup=$(find "${EFI_DIR}/Backups" -type d -maxdepth 1 -exec basename {} \; 2>/dev/null | sort -t _ -r -k1.1,1.4n -k1.5,1.6n -k1.7,1.8 -k2nr -k3nr -k4nr | grep -E '[0-9]{8}_[0-9]{2}_[0-9]{2}_[0-9]{2}' | head -n1)
+    _lastBackup=$(find "${EFI_DIR}/Backups" -type d -maxdepth 1 -exec basename {} \; 2>/dev/null | sort -t _ -r -k1.1,1.4n -k1.5,1.6n -k1.7,1.8 -k2nr -k3nr -k4nr | perl -ne 'if(/[0-9]{8}_[0-9]{2}_[0-9]{2}_[0-9]{2}/){print;exit}')
 
     local _escaped_EFI_DIR
     _escaped_EFI_DIR=$(echo -n -E "${EFI_DIR}" | perl -pe 's/\//\\\//g')
 
     local _spaceUsed
     _spaceUsed=$(df | awk '/'"${_escaped_EFI_DIR}"'/ {print $5}'| perl -ne '/([0-9]+)/ and print $1')
+    if [[ "$_spaceUsed" -ge 80 ]];then
+        echo -e "${RED}More than ${UNDERLINE}${BOLD}${_spaceUsed}%${OFF}${RED} of EFi partition space is used"
+    else if [[ "$_spaceUsed" -ge 50 ]];then
+        echo -e "${YELLOW}More than ${UNDERLINE}${BOLD}${_spaceUsed}%${OFF}${YELLOW} of EFi partition space is used"
+    fi
+    fi
     if [[ -n "$_lastBackup" ]] && diff -r -x '\._*' "${EFI_DIR}/EFI/OC/" "${EFI_DIR}/Backups/${_lastBackup}/OC/" >/dev/null;then
         echo -e "${BOLD}${UNDERLINE}${GREEN}Found already ${YELLOW}existing${GREEN} backup: ${BLUE}${EFI_DIR}/Backups/${_lastBackup}${OFF}"
         return
@@ -214,7 +222,6 @@ function backupEFI() {
     fi
 
     echo -e "${CYAN}Backup done!${OFF}"
-
 }
 
 function cleanUp(){
