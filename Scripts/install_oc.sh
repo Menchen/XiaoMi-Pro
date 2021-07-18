@@ -1025,8 +1025,8 @@ function main() {
 	restoreOptionalKext
 
 	# Disabled due to patch not uploaded to main repo
-	restoreBrcmPatchRAM
-	restoreAirportFixup
+	# restoreBrcmPatchRAM
+	# restoreAirportFixup
 	echo
 
 	# Interactive restore
