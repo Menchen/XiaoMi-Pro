@@ -205,7 +205,7 @@ function backupEFI() {
 		echo -e "${YELLOW}More than ${UNDERLINE}${BOLD}${_spaceUsed}%${OFF}${YELLOW} of EFi partition space is used"
 	fi
 
-	echo ${_lastBackup}
+	echo "${_lastBackup}"
 	if [[ -n "$_lastBackup" ]] && diff -r -x '\._*' -x '\.DS_Store' "${EFI_DIR}/EFI/OC/" "${_lastBackup}/OC/"; then
 		echo -e "${BOLD}${UNDERLINE}${GREEN}Found already ${YELLOW}existing${GREEN} backup: ${BLUE}${EFI_DIR}/Backups/${_lastBackup}${OFF}"
 		return
