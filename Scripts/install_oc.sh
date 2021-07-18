@@ -191,7 +191,8 @@ function downloadEFI() {
 function backupEFI() {
 	[[ -z "$EFI_DIR" ]] && mount_efi
 	local _lastBackup
-	_lastBackup=$(find "${EFI_DIR}/Backups" -type d -maxdepth 1 -exec basename {} \; 2>/dev/null | sort -t _ -r -k1.1,1.4n -k1.5,1.6n -k1.7,1.8 -k2nr -k3nr -k4nr | perl -ne 'if(/[0-9]{8}_[0-9]{2}_[0-9]{2}_[0-9]{2}/){print;exit}')
+	_lastBackup=$(find "${EFI_DIR}/Backups" -type d -mindepth 1 -maxdepth 1 -print0 2>/dev/null | xargs -0 ls -tl | perl -ne 'if(/^(.+):$/){print $1;exit;}')
+	# _lastBackup=$(find "${EFI_DIR}/Backups" -type d -maxdepth 1 -exec basename {} \; 2>/dev/null | sort -t _ -r -k1.1,1.4n -k1.5,1.6n -k1.7,1.8 -k2nr -k3nr -k4nr | perl -ne 'if(/[0-9]{8}_[0-9]{2}_[0-9]{2}_[0-9]{2}/){print;exit}')
 
 	local _escaped_EFI_DIR
 	_escaped_EFI_DIR=$(echo -n -E "${EFI_DIR}" | perl -pe 's/\//\\\//g')
@@ -203,7 +204,9 @@ function backupEFI() {
 	elif [[ "$_spaceUsed" -ge 50 ]]; then
 		echo -e "${YELLOW}More than ${UNDERLINE}${BOLD}${_spaceUsed}%${OFF}${YELLOW} of EFi partition space is used"
 	fi
-	if [[ -n "$_lastBackup" ]] && diff -r -x '\._*' -x '\.DS_Store' "${EFI_DIR}/EFI/OC/" "${EFI_DIR}/Backups/${_lastBackup}/OC/" >/dev/null; then
+
+	echo ${_lastBackup}
+	if [[ -n "$_lastBackup" ]] && diff -r -x '\._*' -x '\.DS_Store' "${EFI_DIR}/EFI/OC/" "${_lastBackup}/OC/"; then
 		echo -e "${BOLD}${UNDERLINE}${GREEN}Found already ${YELLOW}existing${GREEN} backup: ${BLUE}${EFI_DIR}/Backups/${_lastBackup}${OFF}"
 		return
 	fi
